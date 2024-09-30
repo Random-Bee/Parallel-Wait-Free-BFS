@@ -2,37 +2,26 @@
 input: G(V, E), s
 output: array d[1..n] of distances from s to all other vertices
 
-class circularLinkedList {
+class waitFreeLinkedList {
     int data;
-    circularLinkedList* next;
+    waitFreeLinkedList* next;
 };
 
-class LinkedList {
-    circularLinkedList* itr;
-    circularLinkedList* tail;
-    LinkedList* next;
+t = number of threads
 
-    circularLinkedList* getCurrNode() {
-        get currernt node and move itr to next node
-    }
+class outerLinkedList {
+    waitFreeLinkedList* heads[t]
+    int curr_list = 0;
 
-    void insertNode(int data) {
-        insert node at the end of the circular linked list
-    }
-
-    void deleteNode(circularLinkedList* node) {
-        delete the node from the circular linked list
-    }
-
-    bool isEmpty() {
-        return true if the circular linked list is empty
+    void insertNode(int data, int list_num) {
+        // Insert node at any position in the list at index list_num
     }
 };
 
 int visited[1..n] = {0};
 int d[1..n] = {-1};
 
-void bfs(LinkedList* curr) {
+void bfs(outerLinkedList* curr) {
     while(1) {
         if(curr->isEmpty()) {
             // Two cases:
@@ -47,20 +36,46 @@ void bfs(LinkedList* curr) {
             curr = curr->next;
         }
         if(curr->next == NULL) {
-            LinkedList* newLevel = new LinkedList();
+            outerLinkedList* newLevel = new outerLinkedList();
             compare_and_swap(curr->next, NULL, newLevel);
         }
-        while(!curr->isEmpty()) {
-            circularLinkedList* node = curr->getCurrNode();
-            int neighours[] = G[node->data];
-            shuffle(neighours);
-            for(int i = 0; i < neighours.size(); i++) {
-                if(d[neighours[i]] == -1) {
-                    curr->next->insertNode(neighours[i]);
-                    d[neighours[i]] = d[node->data] + 1;
+
+        int null_count = 0;
+
+        while(1) {
+            // Get list_num to operate on
+            int list_num = fetch_add(curr_list, 1) % t;
+
+            // Iterate in the list at index list_num
+            waitFreeLinkedList* Head = heads[list_num];
+            waitFreeLinkedList* temp = Head;
+
+            if(temp == NULL) {
+                null_count++;
+                if(null_count == t) {
+                    // All lists are empty
+                    break;
                 }
+                continue;
             }
-            curr->deleteNode(node);
+
+            null_count = 0;
+
+            while(temp != NULL) {
+                int neighours[] = G[temp->data];
+                shuffle(neighours);
+                for(int i = 0; i < neighours.size(); i++) {
+                    if(d[neighours[i]] == -1) {
+                        // get list_num of the next level
+                        int next_list_num = fetch_add(curr->next->curr_list, 1) % t;
+                        curr->next->insertNode(neighours[i], next_list_num);
+                        d[neighours[i]] = d[temp->data] + 1;
+                    }
+                }
+                temp = temp->next;
+            }
+
+            curr->heads[list_num] = NULL;
         }
     }
 }
