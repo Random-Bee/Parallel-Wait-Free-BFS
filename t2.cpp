@@ -26,7 +26,8 @@ void work() {
 
 int main() {
     ios_base::sync_with_stdio(false); cin.tie(0); cout.tie(0);
-    ll c = 0, n = 100;
+    ll c = 0, n, t;
+    cin >> n >> t;
     vector<pair<ll,ll>> arr;
     for(int i=1; i<=n; i++) {
         c++;
@@ -40,7 +41,15 @@ int main() {
             arr.push_back({i,c});
         }
     }
-    cout << c+1 << " " << arr.size() << " " << 1 << nl;
+    ll k = c;
+    for(int i=n+1; i<=k; i++) {
+        for(int j=0; j<n; j++) {
+            c++;
+            // cout << i << " " << c << nl;
+            arr.push_back({i,c});
+        }
+    }
+    cout << c+1 << " " << arr.size() << " " << t << nl;
     for(auto p: arr) {
         cout << p.first << " " << p.second << nl;
     }

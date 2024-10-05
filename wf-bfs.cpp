@@ -7,7 +7,7 @@ mt19937 rng(chrono::steady_clock::now().time_since_epoch().count());
 
 int N, M;
 vector<vector<int>> adj;
-vector<int> dist;
+vector<int> dist, vis;
 
 int num_t;
 
@@ -22,24 +22,14 @@ sem_t mtx;
 
 class outer_list_node {
     public:
-    vector<inner_list_node*> lists, completed_lists;
+    vector<vector<int>> lists;
+    vector<bool> done;
     atomic<outer_list_node*> next = nullptr;
-
-    void add_inner_list_node(int val, int id) {
-        inner_list_node* node = new inner_list_node;
-        node->data = val;
-        node->next = lists[id];
-        lists[id] = node;
-    }
 
     void print(int id) {
         sem_wait(&mtx);
-        inner_list_node* tmp = lists[id];
         cout << "T" << id << " : ";
-        while(tmp!=nullptr) {
-            cout << tmp->data << " ";
-            tmp = tmp->next;
-        }
+        for(auto x: lists[id]) cout << x << " ";
         cout << "\n";
         sem_post(&mtx);
     }
@@ -47,29 +37,40 @@ class outer_list_node {
 
 vector<int> ops;
 
+atomic<int> v1 = 0;
+
 void wf_bfs(outer_list_node* head, int tid) {
     outer_list_node* curr = head;
     int dpt = 0;
     while(1) {
+        // usleep(tid*1000 + 1909);
+        // string str = to_string(tid) + " " + to_string(dpt);
+        // cout << str << endl; dpt++;
         int null_count = 0, work_on = tid;
         bool next_is_null = true;
-        while(null_count != num_t) {
-            inner_list_node* head = curr->lists[work_on];
-            inner_list_node* temp = head;
 
-            if(head == nullptr) {
+        while(null_count != num_t) {
+            if(curr->done[work_on]) {
                 null_count++;
                 work_on = (work_on+1)%num_t;
                 continue;
             }
 
+            vector<int> list = curr->lists[work_on];
+            ops[tid] += list.size();
+
+            if(list.empty()) {
+                null_count++;
+                curr->done[work_on] = true;
+                work_on = (work_on+1)%num_t;
+                continue;
+            }
+
             if(next_is_null && curr->next == nullptr) {
+                v1++;
                 outer_list_node* new_node = new outer_list_node;
-                new_node->lists.resize(num_t, nullptr);
-                new_node->completed_lists.resize(num_t, nullptr);
-
-                // ops[tid] += num_t;
-
+                new_node->lists.resize(num_t);
+                new_node->done.resize(num_t, 0);
                 outer_list_node* expected = nullptr;
                 if(!atomic_compare_exchange_strong(&(curr->next), &expected, new_node)) {
                     delete new_node;
@@ -77,25 +78,27 @@ void wf_bfs(outer_list_node* head, int tid) {
             }
             next_is_null = false;
 
-            while(temp!=nullptr) {
-                if(!temp->done) {
-                    vector<int> neighbours = adj[temp->data];
-                    shuffle(neighbours.begin(), neighbours.end(), rng);
-                    for(auto v: neighbours) {
-                        ops[tid]++;
-                        if(dist[v] == -1) {
-                            curr->next.load()->add_inner_list_node(v, tid);
-                            dist[v] = dist[temp->data] + 1;
-                        }
-                    }
-                    temp->done = 1;
-                }
-                temp = temp->next;
-            }
+            outer_list_node* next_node = curr->next.load();
 
-            curr->completed_lists[work_on] = head;
-            curr->lists[work_on] = nullptr;
+            shuffle(list.begin(), list.end(), rng);
+            ops[tid] += list.size();
+
+            for(auto u: list) {
+                if(vis[u]) continue;
+                vector<int> neighbours = adj[u];
+                shuffle(neighbours.begin(), neighbours.end(), rng);
+                ops[tid] += neighbours.size();
+                for(auto v: neighbours) {
+                    ops[tid]++;
+                    if(dist[v] == -1) {
+                        next_node->lists[tid].push_back(v);
+                        dist[v] = dist[u]+1;
+                    }
+                }
+                vis[u] = 1;
+            }
             null_count++;
+            curr->done[work_on] = true;
             work_on = (work_on+1)%num_t;
         }
 
@@ -103,6 +106,9 @@ void wf_bfs(outer_list_node* head, int tid) {
             curr = curr->next;
         }
         else break;
+
+        // curr->print(tid);
+        // usleep(10000);
     }
 }
 
@@ -116,6 +122,7 @@ int main(int argc, char *argv[]) {
 
     adj.resize(N);
     dist.resize(N, -1);
+    vis.resize(N, 0);
     ops.resize(num_t, 0);
 
     for(i=0; i<M; i++) {
@@ -128,9 +135,9 @@ int main(int argc, char *argv[]) {
     fclose(f_in);
     
     outer_list_node* head = new outer_list_node;
-    head->lists.resize(num_t, nullptr);
-    head->completed_lists.resize(num_t, nullptr);
-    head->add_inner_list_node(0, 0);
+    head->lists.resize(num_t);
+    head->done.resize(num_t, 0);
+    head->lists[0].push_back(0);
     dist[0] = 0;
 
     sem_init(&mtx,0,1);
@@ -151,14 +158,6 @@ int main(int argc, char *argv[]) {
     while(head != nullptr) {
         outer_list_node* temp = head;
         head = head->next;
-        for(i=0; i<num_t; i++) {
-            inner_list_node* inner_head = temp->completed_lists[i];
-            while(inner_head != nullptr) {
-                inner_list_node* itmp = inner_head;
-                inner_head = inner_head->next;
-                delete itmp;
-            }
-        }
         delete temp;
     }
 
@@ -174,6 +173,7 @@ int main(int argc, char *argv[]) {
     
     for(auto x: ops) cout << x << " "; cout << "\n";
     cout << duration << "\n";
+    cout << v1 << "\n";
 
     return 0;
 }
