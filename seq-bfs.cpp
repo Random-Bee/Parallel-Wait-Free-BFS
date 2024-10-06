@@ -31,8 +31,7 @@ int main(int argc, char *argv[]) {
     
     FILE* f_in = fopen(argv[1], "r");
 
-    int num_t;
-    fscanf(f_in, "%d %d %d", &N, &M, &num_t);
+    fscanf(f_in, "%d %d", &N, &M);
 
     adj.resize(N);
     dist.resize(N, -1);

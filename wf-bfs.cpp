@@ -3,7 +3,6 @@
 using namespace std;
 using namespace chrono;
 
-mt19937 rng(chrono::steady_clock::now().time_since_epoch().count());
 
 int N, M;
 vector<vector<int>> adj;
@@ -37,15 +36,17 @@ class outer_list_node {
 
 vector<int> ops;
 
+vector<vector<int>> enc;
+
 atomic<int> v1 = 0;
 
+int th = 10;
+
 void wf_bfs(outer_list_node* head, int tid) {
+    mt19937 rng(chrono::steady_clock::now().time_since_epoch().count());
     outer_list_node* curr = head;
     int dpt = 0;
-    while(1) {
-        // usleep(tid*1000 + 1909);
-        // string str = to_string(tid) + " " + to_string(dpt);
-        // cout << str << endl; dpt++;
+    while(curr != nullptr) {
         int null_count = 0, work_on = tid;
         bool next_is_null = true;
 
@@ -57,17 +58,18 @@ void wf_bfs(outer_list_node* head, int tid) {
             }
 
             vector<int> list = curr->lists[work_on];
-            ops[tid] += list.size();
+            // ops[tid] += list.size();
 
             if(list.empty()) {
                 null_count++;
                 curr->done[work_on] = true;
-                work_on = (work_on+1)%num_t;
+                work_on++;
+                if(work_on>=num_t) work_on -= num_t;
                 continue;
             }
 
             if(next_is_null && curr->next == nullptr) {
-                v1++;
+                // v1++;
                 outer_list_node* new_node = new outer_list_node;
                 new_node->lists.resize(num_t);
                 new_node->done.resize(num_t, 0);
@@ -80,32 +82,46 @@ void wf_bfs(outer_list_node* head, int tid) {
 
             outer_list_node* next_node = curr->next.load();
 
-            shuffle(list.begin(), list.end(), rng);
-            ops[tid] += list.size();
+            bool fl = 1;
+            if(list.size()>=th && work_on != tid) {
+            // if(work_on != tid) {
+                shuffle(list.begin(), list.end(), rng);
+                fl = 0;
+            }
+            // ops[tid] += list.size();
 
             for(auto u: list) {
                 if(vis[u]) continue;
-                vector<int> neighbours = adj[u];
-                shuffle(neighbours.begin(), neighbours.end(), rng);
-                ops[tid] += neighbours.size();
-                for(auto v: neighbours) {
-                    ops[tid]++;
-                    if(dist[v] == -1) {
-                        next_node->lists[tid].push_back(v);
-                        dist[v] = dist[u]+1;
+                if(fl && work_on!=tid) {
+                    vector<int> neighbours = adj[u];
+                    shuffle(neighbours.begin(), neighbours.end(), rng);
+                    // ops[tid] += neighbours.size();
+                    for(auto v: neighbours) {
+                    // for(auto v: adj[u]) {
+                        // ops[tid]++;
+                        // enc[tid].push_back(v);
+                        if(dist[v] == -1) {
+                            next_node->lists[tid].push_back(v);
+                            dist[v] = dist[u]+1;
+                        }
+                    }
+                }
+                else {
+                    for(auto v: adj[u]) {
+                        // enc[tid].push_back(v);
+                        if(dist[v] == -1) {
+                            next_node->lists[tid].push_back(v);
+                            dist[v] = dist[u]+1;
+                        }
                     }
                 }
                 vis[u] = 1;
             }
             null_count++;
             curr->done[work_on] = true;
-            work_on = (work_on+1)%num_t;
+            work_on++;
+            if(work_on>=num_t) work_on -= num_t;
         }
-
-        if(curr->next != nullptr) {
-            curr = curr->next;
-        }
-        else break;
 
         // curr->print(tid);
         // usleep(10000);
@@ -118,12 +134,15 @@ int main(int argc, char *argv[]) {
     
     FILE* f_in = fopen(argv[1], "r");
 
-    fscanf(f_in, "%d %d %d", &N, &M, &num_t);
+    cin >> num_t;
+
+    fscanf(f_in, "%d %d", &N, &M);
 
     adj.resize(N);
     dist.resize(N, -1);
     vis.resize(N, 0);
     ops.resize(num_t, 0);
+    enc.resize(num_t);
 
     for(i=0; i<M; i++) {
         int x, y;
@@ -174,6 +193,11 @@ int main(int argc, char *argv[]) {
     for(auto x: ops) cout << x << " "; cout << "\n";
     cout << duration << "\n";
     cout << v1 << "\n";
+
+    // for(i=0; i<num_t; i++) {
+    //     cout << "T" << i << " : ";
+    //     for(auto x: enc[i]) cout << x << " "; cout << "\n";
+    // }
 
     return 0;
 }
