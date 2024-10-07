@@ -44,7 +44,9 @@ void met1() {
 
 void met2() {
     ll n, m, i, j;
-    cin >> n >> m;
+    // cin >> n >> m;
+    cin >> n;
+    m = 50*n;
     cout << n << " " << m << nl;
     for(i=0; i<m; i++) {
         ll x = random(0, n-1), y = random(0, n-1);
@@ -52,9 +54,21 @@ void met2() {
     }
 }
 
+void met3() {
+    ll n, i;
+    cin >> n;
+    cout << n << " " << n-1 << nl;
+    for(i=0; i<n-1; i++) {
+        cout << i << " " << i+1 << nl;
+    }
+}
+
 int main() {
     ios_base::sync_with_stdio(false); cin.tie(0); cout.tie(0);
-    met1();
-    // met2();
+    ll t;
+    cin >> t;
+    if(t==1) met1();
+    if(t==2) met2();
+    if(t==3) met3();
     return 0;
 }

@@ -6,8 +6,6 @@ int N, M;
 vector<vector<int>> adj;
 vector<int> dist;
 
-int ops = 0;
-
 void bfs() {
     queue<int> q;
     dist[0] = 0;
@@ -16,7 +14,6 @@ void bfs() {
         int u = q.front(), d = dist[u];
         q.pop();
         for(auto v: adj[u]) {
-            ops++;
             if(dist[v] == -1) {
                 dist[v] = d + 1;
                 q.push(v);
@@ -39,6 +36,8 @@ int main(int argc, char *argv[]) {
     for(i=0; i<M; i++) {
         int x, y;
         fscanf(f_in, "%d %d", &x, &y);
+        // x--; y--; /////////////////////////////////////////////
+        if(x>=N || y>=N) continue;
         adj[x].push_back(y);
         adj[y].push_back(x);
     }
@@ -62,7 +61,6 @@ int main(int argc, char *argv[]) {
 
     fclose(f_out);
 
-    cout << ops << "\n";
     cout << duration << "\n";
     
     return 0;
