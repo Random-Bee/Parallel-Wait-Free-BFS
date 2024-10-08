@@ -94,8 +94,6 @@ int main(int argc, char *argv[]) {
     
     FILE* f_in = fopen(argv[1], "r");
 
-    cin >> num_t;
-
     fscanf(f_in, "%d %d", &N, &M);
 
     adj.resize(N);
@@ -113,6 +111,8 @@ int main(int argc, char *argv[]) {
     
     fclose(f_in);
     
+    cin >> num_t;
+
     outer_list_node* head = new outer_list_node;
     head->lists.resize(num_t);
     head->done.resize(num_t, 0);
