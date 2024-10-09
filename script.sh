@@ -1,42 +1,41 @@
 #!/bin/bash
 
-echo 2
+echo 16 1
 
 for i in {1..5}
 do
-  echo 2 | ./wf datasets/soc-sinaweibo.mtx
+  echo 16 1 | ./wftd datasets/dummy1.txt
   sleep 5
 done
 
-echo 4
+echo 16 2
 
 for i in {1..5}
 do
-  echo 4 | ./wf datasets/soc-sinaweibo.mtx
+  echo 16 2 | ./wftd datasets/dummy1.txt
   sleep 5
 done
 
-echo 8
+echo 16 3
 
 for i in {1..5}
 do
-  echo 8 | ./wf datasets/soc-sinaweibo.mtx
+  echo 16 4 | ./wftd datasets/dummy1.txt
   sleep 5
 done
 
-echo 16
+echo 16 4
 
 for i in {1..5}
 do
-  echo 16 | ./wf datasets/soc-sinaweibo.mtx
+  echo 16 8 | ./wftd datasets/dummy1.txt
   sleep 5
 done
 
-echo 32
+echo 16 5
 
 for i in {1..5}
 do
-  echo 32 | ./wf datasets/soc-sinaweibo.mtx
+  echo 16 15 | ./wftd datasets/dummy1.txt
   sleep 5
 done
-
