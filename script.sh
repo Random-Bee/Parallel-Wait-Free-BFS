@@ -1,41 +1,41 @@
 #!/bin/bash
 
-echo 16 1
+echo 2
 
 for i in {1..5}
 do
-  echo 16 1 | ./wftd datasets/dummy1.txt
+  echo 2 | ./wf datasets/soc-LiveJournal1.txt
   sleep 5
 done
 
-echo 16 2
+echo 4
 
 for i in {1..5}
 do
-  echo 16 2 | ./wftd datasets/dummy1.txt
+  echo 4 | ./wf datasets/soc-LiveJournal1.txt
   sleep 5
 done
 
-echo 16 3
+echo 8
 
 for i in {1..5}
 do
-  echo 16 4 | ./wftd datasets/dummy1.txt
+  echo 8 | ./wf datasets/soc-LiveJournal1.txt
   sleep 5
 done
 
-echo 16 4
+echo 16
 
 for i in {1..5}
 do
-  echo 16 8 | ./wftd datasets/dummy1.txt
+  echo 16 | ./wf datasets/soc-LiveJournal1.txt
   sleep 5
 done
 
-echo 16 5
+echo 32
 
 for i in {1..5}
 do
-  echo 16 15 | ./wftd datasets/dummy1.txt
+  echo 32 | ./wf datasets/soc-LiveJournal1.txt
   sleep 5
 done
