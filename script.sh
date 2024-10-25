@@ -91,13 +91,44 @@
 #   echo
 # done
 
-for i in 2 4 8 16 32 64
+# for i in 2 4 8 16 32 64
+# do
+#   echo $i
+#   echo Wait-Free
+#   for j in {1..5}
+#   do
+#     echo $i | ./wf datasets/soc-sinaweibo.mtx
+#     sleep 5
+#   done
+#   echo
+
+#   echo Barrier
+#   for j in {1..5}
+#   do
+#     echo $i | ./bar datasets/soc-sinaweibo.mtx
+#     sleep 5
+#   done
+#   echo
+# done
+
+
+# Experiment 3
+
+# echo 2 500000 | ./a.out > datasets/dummy1.txt
+# echo Sequential
+# for i in {1..5}
+# do
+#   ./seq datasets/dummy1.txt
+#   sleep 5
+# done
+
+for i in {1..5}
 do
   echo $i
   # echo Wait-Free
   # for j in {1..5}
   # do
-  #   echo $i | ./wf datasets/soc-sinaweibo.mtx
+  #   echo 16 $i | ./wftd datasets/dummy1.txt
   #   sleep 5
   # done
   # echo
@@ -105,7 +136,7 @@ do
   echo Barrier
   for j in {1..5}
   do
-    echo $i | ./bar datasets/soc-sinaweibo.mtx
+    echo 16 $i | ./bartd datasets/dummy1.txt
     sleep 5
   done
   echo
