@@ -1,11 +1,12 @@
 #include <bits/stdc++.h>
-#include <semaphore.h>
+#include <barrier>
 using namespace std;
 using namespace chrono;
 
 int N, M;
 vector<vector<int>> adj;
-vector<int> dist, vis;
+vector<int> comps;
+vector<bool> vis;
 
 int num_t;
 
@@ -72,7 +73,11 @@ class raiiArray {
 
 int threshold = 10;
 
-void wf_bfs(outer_list_node* head, int tid) {
+int comp = 0;
+
+outer_list_node* head = nullptr;
+
+void wf_bfs(int tid) {
     mt19937 rng(chrono::steady_clock::now().time_since_epoch().count());
     outer_list_node* curr = head;
 
@@ -117,17 +122,17 @@ void wf_bfs(outer_list_node* head, int tid) {
                     vector<int> neighbours = adj[u];
                     shuffle(neighbours.begin(), neighbours.end(), rng);
                     for(auto v: neighbours) {
-                        if(dist[v] == -1) {
+                        if(comps[v] == -1) {
                             next_node->lists[tid].push_back(v);
-                            dist[v] = dist[u]+1;
+                            comps[v] = comp;
                         }
                     }
                 }
                 else {
                     for(auto v: adj[u]) {
-                        if(dist[v] == -1) {
+                        if(comps[v] == -1) {
                             next_node->lists[tid].push_back(v);
-                            dist[v] = dist[u]+1;
+                            comps[v] = comp;
                         }
                     }
                 }
@@ -143,12 +148,70 @@ void wf_bfs(outer_list_node* head, int tid) {
     }
 }
 
-void cleanUp(outer_list_node* head, int tid) {
+void cleanUp(int tid) {
     outer_list_node* curr = head;
     while(curr != nullptr) {
-        outer_list_node* temp = curr;
-        temp->lists[tid].clear();
+        curr->lists[tid].clear();
         curr = curr->next;
+    }
+}
+
+pthread_barrier_t bar_bfs, bar_clean, bar, bar1;
+
+// main thread calls this function
+void scc(int tid) {
+    int i, j;
+    for(i=0; i<N; i++) {
+        if(comps[i] == -1) {
+            while(head != nullptr) {
+                outer_list_node* temp = head;
+                head = head->next;
+                delete temp;
+            }
+            head = new outer_list_node;
+            head->lists.resize(num_t);
+            head->done.resize(num_t, 0);
+            head->lists[0].push_back(i);
+            comps[i] = comp;
+
+            pthread_barrier_wait(&bar_bfs);
+
+            wf_bfs(tid);
+
+            pthread_barrier_wait(&bar_clean);
+
+            cleanUp(tid);
+
+            pthread_barrier_wait(&bar);
+
+            comp++;
+        }
+    }
+
+    while(head != nullptr) {
+        outer_list_node* temp = head;
+        head = head->next;
+        delete temp;
+    }
+    head = nullptr;
+    pthread_barrier_wait(&bar_bfs);
+    comp = -1;
+    pthread_barrier_wait(&bar_clean);
+    pthread_barrier_wait(&bar);
+}
+
+// Other threads call this function
+void scc_helper(int tid) {
+    while(comp != -1) {
+        pthread_barrier_wait(&bar_bfs);
+
+        wf_bfs(tid);
+
+        pthread_barrier_wait(&bar_clean);
+
+        cleanUp(tid);
+
+        pthread_barrier_wait(&bar);
     }
 }
 
@@ -161,66 +224,54 @@ int main(int argc, char *argv[]) {
     fscanf(f_in, "%d %d", &N, &M);
 
     adj.resize(N);
-    dist.resize(N, -1);
+    comps.resize(N, -1);
     vis.resize(N, 0);
 
     for(i=0; i<M; i++) {
         int x, y;
         fscanf(f_in, "%d %d", &x, &y);
-        x--; y--; /////////////////////////////////////////////
+        // x--; y--; /////////////////////////////////////////////
         if(x>=N || y>=N) continue;
         adj[x].push_back(y);
         adj[y].push_back(x);
     }
     
     fclose(f_in);
-    
+
     cin >> num_t;
 
-    outer_list_node* head = new outer_list_node;
-    head->lists.resize(num_t);
-    head->done.resize(num_t, 0);
-    head->lists[0].push_back(0);
-    dist[0] = 0;
+    // bar = std::barrier(num_t);
+    pthread_barrier_init(&bar, NULL, num_t);
+    pthread_barrier_init(&bar1, NULL, num_t);
+    pthread_barrier_init(&bar_bfs, NULL, num_t);
+    pthread_barrier_init(&bar_clean, NULL, num_t);
 
     high_resolution_clock::time_point t1 = high_resolution_clock::now();
-    
+
     vector<thread> th;
-    for(i=0; i<num_t; i++) {
-        th.push_back(thread(wf_bfs, head, i));
-    }
-    for(i=0; i<num_t; i++) {
-        th[i].join();
+    th.push_back(thread(scc, 0));
+    for(i=1; i<num_t; i++) {
+        th.push_back(thread(scc_helper, i));
     }
 
-    th.clear();
-    for(i=0; i<num_t; i++) {
-        th.push_back(thread(cleanUp, head, i));
-    }
     for(i=0; i<num_t; i++) {
         th[i].join();
-    }
-
-    while(head != nullptr) {
-        outer_list_node* temp = head;
-        head = head->next;
-        delete temp;
     }
 
     high_resolution_clock::time_point t2 = high_resolution_clock::now();
     auto duration = duration_cast<microseconds>(t2 - t1).count();
 
-    FILE* f_out = fopen("wf-out.txt", "w");
+    FILE* f_out = fopen("par-out.txt", "w");
 
-    for(auto d: dist) {
-        fprintf(f_out, "%d\n", d);
+    for(auto c: comps) {
+        fprintf(f_out, "%d\n", c);
     }
     fprintf(f_out, "\n");
-    fprintf(f_out, "%d\n", *max_element(dist.begin(), dist.end()));
+    fprintf(f_out, "%d\n", *max_element(comps.begin(), comps.end()));
 
     fclose(f_out);
-    
-    cout << duration << "\n";
 
+    cout << duration << "\n";
+    
     return 0;
 }

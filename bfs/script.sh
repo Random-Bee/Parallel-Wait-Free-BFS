@@ -74,13 +74,13 @@
 # for i in 2 4 8 16 32 64
 # do
 #   echo $i
-  # echo Wait-Free
-  # for j in {1..5}
-  # do
-  #   echo $i | ./wf datasets/dummy1.txt
-  #   sleep 2
-  # done
-  # echo
+#   echo Wait-Free
+#   for j in {1..5}
+#   do
+#     echo $i | ./wf datasets/dummy1.txt
+#     sleep 2
+#   done
+#   echo
 
   # echo Wait-Free Atomic
   # for j in {1..5}
@@ -133,7 +133,8 @@
 echo soc-sinaweibo
 echo
 
-for i in 2 4 8 16 32 64
+# for i in 2 4 8 16 32 64
+for i in 8 16 32 64
 do
   echo $i
   echo Wait-Free
