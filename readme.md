@@ -1,1 +1,1 @@
-Parallel Wait Free BFS
+Parallel Wait-Free BFS
