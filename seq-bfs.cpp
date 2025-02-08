@@ -32,11 +32,13 @@ int main(int argc, char *argv[]) {
 
     adj.resize(N);
     dist.resize(N, -1);
-
+    
     for(i=0; i<M; i++) {
         int x, y;
         fscanf(f_in, "%d %d", &x, &y);
-        // x--; y--; /////////////////////////////////////////////
+        // x--; y--; ///////////////////////////////////////////// for sina weibo
+        // x-=101; y-=101; ///////////////////////////////////////////// for friendster
+        assert(x>=0 && y>=0);
         if(x>=N || y>=N) continue;
         adj[x].push_back(y);
         adj[y].push_back(x);

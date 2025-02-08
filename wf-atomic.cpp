@@ -13,9 +13,9 @@ int num_t;
 class customList {
     public:
     atomic<int*> list;
-    atomic<int> size = 0;
-    atomic<int> capacity = 1;
-    atomic<int> head = 0;
+    atomic<int> size;
+    atomic<int> capacity;
+    atomic<int> head;
     atomic<int*>* prevPointers;
     int prevPointersSize = 0;
     int prevPointersCapacity = 1;
@@ -23,6 +23,9 @@ class customList {
     customList() {
         list.store(new int[1], memory_order_relaxed);
         prevPointers = new atomic<int*>[1];
+        size = 0;
+        capacity = 1;
+        head = 0;
     }
 
     void push_back(int x) {
@@ -78,7 +81,7 @@ class outer_list_node {
     public:
     customList* lists;
     atomic<bool>* done;
-    atomic<outer_list_node*> next = nullptr;
+    atomic<outer_list_node*> next;
 
     outer_list_node(int num_t) {
         lists = new customList[num_t];
@@ -86,6 +89,7 @@ class outer_list_node {
         for(int i=0; i<num_t; i++) {
             done[i].store(0, memory_order_relaxed);
         }
+        next = nullptr;
     }
 
     ~outer_list_node() {
