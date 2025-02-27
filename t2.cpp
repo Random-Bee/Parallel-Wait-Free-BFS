@@ -49,7 +49,7 @@ void met2() {
     m = 50*n;
     cout << n << " " << m << nl;
     for(i=0; i<m; i++) {
-        ll x = random(0, n-1), y = random(0, n-1);
+        ll x = random(0, n-1), y = random(x, n-1);
         cout << x << " " << y << nl;
     }
 }
@@ -63,6 +63,24 @@ void met3() {
     }
 }
 
+void met4() {
+    ll n, d, i, j;
+    cin >> n >> d;
+    vector<pair<ll,ll>> edges;
+    uniform_int_distribution<int> dist(0, 99);
+    for(i=0; i<n; i++) {
+        for(j=i+1; j<n; j++) {
+            if(dist(rng) < d) {
+                edges.push_back({i, j});
+            }
+        }
+    }
+    cout << n << " " << edges.size() << nl;
+    for(auto p: edges) {
+        cout << p.first << " " << p.second << nl;
+    }
+}
+
 int main() {
     ios_base::sync_with_stdio(false); cin.tie(0); cout.tie(0);
     ll t;
@@ -70,5 +88,6 @@ int main() {
     if(t==1) met1();
     if(t==2) met2();
     if(t==3) met3();
+    if(t==4) met4();
     return 0;
 }

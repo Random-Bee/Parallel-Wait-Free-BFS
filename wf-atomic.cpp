@@ -23,9 +23,9 @@ class customList {
     customList() {
         list.store(new int[1], memory_order_relaxed);
         prevPointers = new atomic<int*>[1];
-        size = 0;
-        capacity = 1;
-        head = 0;
+        capacity.store(1, memory_order_relaxed);
+        size.store(0, memory_order_relaxed);
+        head.store(0, memory_order_relaxed);
     }
 
     void push_back(int x) {
@@ -89,7 +89,7 @@ class outer_list_node {
         for(int i=0; i<num_t; i++) {
             done[i].store(0, memory_order_relaxed);
         }
-        next = nullptr;
+        next.store(nullptr, memory_order_relaxed);
     }
 
     ~outer_list_node() {
@@ -208,7 +208,8 @@ int main(int argc, char *argv[]) {
     for(i=0; i<M; i++) {
         int x, y;
         fscanf(f_in, "%d %d", &x, &y);
-        // x--; y--; /////////////////////////////////////////////
+        // x--; y--; ///////////////////////////////////////////// for sina weibo
+        // x-=101; y-=101; ///////////////////////////////////////////// for friendster
         if(x>=N || y>=N) continue;
         adj[x].push_back(y);
         adj[y].push_back(x);
