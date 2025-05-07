@@ -79,12 +79,12 @@ class customList {
 
 class outer_list_node {
     public:
-    customList* lists;
+    customList* buckets;
     atomic<bool>* done;
     atomic<outer_list_node*> next;
 
     outer_list_node(int num_t) {
-        lists = new customList[num_t];
+        buckets = new customList[num_t];
         done = new atomic<bool>[num_t];
         for(int i=0; i<num_t; i++) {
             done[i].store(0, memory_order_relaxed);
@@ -93,7 +93,7 @@ class outer_list_node {
     }
 
     ~outer_list_node() {
-        delete[] lists;
+        delete[] buckets;
         delete[] done;
     }
 };
@@ -120,7 +120,7 @@ void wf_bfs(outer_list_node* head, int tid) {
         bool next_is_null = true;
 
         for(int _=0; _<num_t; _++) {
-            if(curr->done[work_on].load(memory_order_relaxed) || curr->lists[work_on].size.load(memory_order_relaxed) == 0) {
+            if(curr->done[work_on].load(memory_order_relaxed) || curr->buckets[work_on].size.load(memory_order_relaxed) == 0) {
                 work_on++;
                 if(work_on>=num_t) work_on -= num_t;
                 continue;
@@ -137,38 +137,36 @@ void wf_bfs(outer_list_node* head, int tid) {
 
             outer_list_node* next_node = curr->next.load();
 
-            int sz = curr->lists[work_on].size.load(memory_order_relaxed);
-            raiiArray list(sz);
-            curr->lists[work_on].copy(list.arr, sz);
+            int sz = curr->buckets[work_on].size.load(memory_order_relaxed);
 
-            bool fl = 1;
-            if(sz>=threshold && work_on != tid) {
-                shuffle(list.arr, list.arr+sz, rng);
-                fl = 0;
-            }
-
-            for(int i=0; i<sz; i++) {
-                int u = list.arr[i], d = dist[u].load(memory_order_relaxed);
-                if(vis[u].load(memory_order_relaxed)) continue;
-                if(fl && work_on!=tid) {
-                    vector<int> neighbours = adj[u];
-                    shuffle(neighbours.begin(), neighbours.end(), rng);
-                    for(auto v: neighbours) {
-                        if(dist[v].load(memory_order_relaxed) == -1) {
-                            next_node->lists[tid].push_back(v);
-                            dist[v].store(d+1, memory_order_relaxed);
-                        }
-                    }
-                }
-                else {
+            if(work_on == tid) {
+                for(int i=0; i<sz; i++) {
+                    int u = curr->buckets[work_on].list[i];
+                    if(vis[u]) continue;
                     for(auto v: adj[u]) {
-                        if(dist[v].load(memory_order_relaxed) == -1) {
-                            next_node->lists[tid].push_back(v);
-                            dist[v].store(d+1, memory_order_relaxed);
+                        if(dist[v] == -1) {
+                            next_node->buckets[tid].push_back(v);
+                            dist[v] = dist[u]+1;
                         }
                     }
+                    vis[u] = 1;
                 }
-                vis[u].store(1, memory_order_relaxed);
+            }
+            else {
+                raiiArray list(sz);
+                curr->buckets[work_on].copy(list.arr, sz);
+                shuffle(list.arr, list.arr+sz, rng);
+                for(int i=0; i<sz; i++) {
+                    int u = list.arr[i];
+                    if(vis[u]) continue;
+                    for(auto v: adj[u]) {
+                        if(dist[v] == -1) {
+                            next_node->buckets[tid].push_back(v);
+                            dist[v] = dist[u]+1;
+                        }
+                    }
+                    vis[u] = 1;
+                }
             }
             
             curr->done[work_on].store(1, memory_order_relaxed);
@@ -184,7 +182,7 @@ void cleanUp(outer_list_node* head, int tid) {
     outer_list_node* curr = head;
     while(curr != nullptr) {
         outer_list_node* temp = curr;
-        temp->lists[tid].clear();
+        temp->buckets[tid].clear();
         curr = curr->next;
     }
 }
@@ -220,7 +218,7 @@ int main(int argc, char *argv[]) {
     cin >> num_t;
 
     outer_list_node* head = new outer_list_node(num_t);
-    head->lists[0].push_back(0);
+    head->buckets[0].push_back(0);
     dist[0] = 0;
 
     high_resolution_clock::time_point t1 = high_resolution_clock::now();
