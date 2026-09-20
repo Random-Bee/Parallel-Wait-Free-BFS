@@ -1,0 +1,5 @@
+\begin{abstract}
+    We present a novel parallel wait-free breadth-first search (BFS) algorithm that significantly improves performance by minimizing synchronization overhead and ensuring progress across all threads. The algorithm leverages a custom dynamic array (CDA) to store vertices at each depth level, supporting multiple reader single writer (MRSW) operations and reducing memory contention. Vertices at the same depth are processed in parallel, and a helping mechanism balances the workload among threads.
+    
+    Extending this approach, we develop two parallel algorithms for connected components (CC) detection. The first algorithm adapts our wait-free BFS to assign component identifiers in parallel. The second algorithm incorporates a lock-free disjoint set union (DSU) to efficiently merge connected components. Experimental results demonstrate superior performance over existing approaches across a range of graph sizes and densities. Our work highlights the effectiveness of wait-free techniques in parallel graph traversal and connected components detection.
+\end{abstract}  

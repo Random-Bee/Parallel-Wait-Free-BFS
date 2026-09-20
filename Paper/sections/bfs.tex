@@ -1,0 +1,358 @@
+\section{Parallel Wait-Free Breadth-First Search}
+\label{bfs_sec}
+
+\subsection{Algorithm}
+
+\subsubsection{Overview}
+
+Throughout this paper, we use the term "node" to refer to elements in linked lists and "vertex" to refer to elements in the graph to ensure clarity and avoid confusion. Given an undirected graph $G = (V, E)$ with $n = |V|$ vertices and $m = |E|$ edges, our goal is to perform a parallel wait-free breadth-first search (BFS) starting from a given source vertex $s \in V$. The objective is to compute the shortest path from $s$ to all other vertices in the graph.
+
+We assume that $T$ threads are working concurrently. Additionally, we maintain a global array $dist$ of size $n$, initialized to $-1$, where $dist[u]$ stores the shortest distance from the source vertex $s$ to vertex $u$. We also use a boolean array $vis$ of size $n$, initialized to \texttt{false}, where $vis[u]$ indicates whether vertex $u$ has been visited. It is important to note that the notion of "visited" in this context differs from its traditional BFS definition, as will be discussed later. The time required to initialize these structures is not included in the performance evaluation.
+
+The key idea behind the parallelization is that the order of vertex visits at the same depth is irrelevant, enabling multiple threads to process vertices in parallel at a given depth. However, we must ensure that all vertices at the current depth are processed before progressing to the next depth.
+
+\subsubsection{Sample Execution}
+Figure \ref{execution} shows a sample execution of the algorithm. Here, we start BFS from node $A$. Hence, when node $0$ is created, the bucket associated with it contains node $A$ for one of the threads, say $T0$. The row associated with $T1$ is empty. Now, $T0$ checks neighbors of $A$ and adds them to node $1$ which contains vertices at distance $1$ from $A$. For sake of discussion, suppose that it adds $B$ and $C$. In the meanwhile, $T1$ works on helping $T0$. Here, $T1$ will add vertices connected to $A$ to its own row at node 1. Since $T1$ is working concurrently with $T0$, it is possible that a vertex is added to multiple rows in node $1$. For example, in Figure \ref{execution}, $B$ and $C$ are added to the row of $T0$ while $C$ and $D$ are added to the row of $T1$. Continuing further, vertices at distance $2$ are added to node 2.
+
+\begin{figure}
+    \centering
+    \begin{tikzpicture}[>=Stealth, node distance=1.5cm and 1.5cm, every node/.style={circle, draw, minimum size=0.8cm}]
+
+    % Nodes
+    \node (A) at (0,0) {A};
+    \node (B) at (2,2) {B};
+    \node (C) at (2,0) {C};
+    \node (D) at (2,-2) {D};
+    \node (E) at (4,2) {E};
+    \node (F) at (4,0) {F};
+
+    % Edges
+    \draw[->] (A) -- (B);
+    \draw[->] (A) -- (C);
+    \draw[->] (A) -- (D);
+    \draw[->] (B) -- (E);
+    \draw[->] (C) -- (E);
+    \draw[->] (C) -- (F);
+
+    \end{tikzpicture}
+
+    \vspace{0.25cm}
+
+    % Bucket Assignments
+    \begin{tikzpicture}[every node/.style={draw, align=center}, node distance=1.2cm and 2.5cm]
+        
+        % Node0
+    \node (n0) at (0,0) {Node 0};
+    \node[rectangle, below=0.25cm of n0] (b0) {Buckets\\T1: A\\T2: -};
+
+    % Node1
+    \node (n1) at (2,0) {Node 1};
+    \node[rectangle, below=0.25cm of n1] (b1) {Buckets\\T1: B, C\\T2: C, D};
+
+    % Node2
+    \node (n2) at (4,0) {Node 2};
+    \node[rectangle, below=0.25cm of n2] (b2) {Buckets\\T1: E\\T2: F};
+
+    % Arrows
+    \draw[->] (b0) -- (b1);
+    \draw[->] (b1) -- (b2);
+
+    \end{tikzpicture}
+    \caption{A sample execution of the Wait-Free BFS algorithm.}
+    \Description{A sample execution of the Wait-Free BFS algorithm.}
+    \label{execution}
+\end{figure}
+
+The pseudo-code for the algorithm is shown in Algorithm \ref{wf_bfs}.
+
+\subsubsection{Work Distribution}
+
+A key challenge in parallel BFS is efficiently storing and managing vertices at different depths while distributing work among multiple threads. The proposed wait-free approach uses a global linked list $D$ where each node of the list corresponds to a depth level. Each node $d$ in $D$ contains the following data structures:
+\begin{itemize}
+    \item \textbf{buckets}: An array of size $T$ where each row $i$ corresponds to the list of vertices to be visited by thread $T_i$ at the current depth. Each row is a custom dynamic array (CDA) that supports the Multiple Reader Single Writer (MRSW) property.
+    \item \textbf{done}: An array of size $T$ where each element $i$ indicates whether all the vertices in the $i$-th row of the $buckets$ array have been visited.
+    \item \textbf{next}: An atomic pointer to the next node in the list.
+\end{itemize}
+The structure of the node is shown in Algorithm \ref{node}.
+
+\begin{algorithm}
+\caption{Definition of ListNode}
+\label{node}
+\begin{algorithmic}[1]
+\State \textbf{class} ListNode
+\State \quad \textbf{public:}
+\State \quad \quad buckets: array of CustomDynamicArray
+\State \quad \quad done: array of boolean
+\State \quad \quad next: atomic reference to ListNode
+\State \textbf{end class}
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Initialization}
+
+The algorithm begins by creating the $0^{th}$ node in the linked list. The $buckets$ array associated with this node will contain vertices at distance $0$ (i.e., the source node, say $s$). This is achieved by adding the source node to the bucket of node $0$. Specifically, $s$ is added to the row of $T0$ while leaving other rows empty. Also, $dist[s]$ is set to $0$. A pointer to this first node of the linked-list is then shared among all threads. Initially, only $T0$ has work to do. However, in subsequent iterations, workload distribution among the threads becomes more balanced due to the helping mechanism.
+
+\subsubsection{Helping Mechanism and Populating Buckets}
+
+At any depth level $d$, each thread $T_i$ begins by processing the vertices in its own bucket, i.e., the $i$-th row of the $buckets$ array. Once a thread finishes processing all vertices in its bucket, it moves to the next bucket at index $(i+1) \% T$. Consequently, each thread eventually visits all buckets at a given depth. This ensures that each thread independently determines when to advance to the next depth level while also assisting slower threads or those with a heavier workload. 
+
+When a thread moves to depth $d+1$, all vertices at depth $d$ have been processed by some thread. Hence, the correctness is unaffected even if some threads are still processing vertices at depth $d$. These threads will eventually realize that the vertices have been processed and move to depth $d+1$.
+
+In the following, we describe the steps performed by each thread $T_i$ when processing the vertices in a bucket. We refer Algorithm \ref{wf_bfs} for the line numbers.
+
+\begin{enumerate}
+    \item If the bucket is empty or marked as done, the thread moves to the next bucket (\textit{see lines 20-24}).
+    
+    \item If the bucket is neither empty nor marked as done, a next node in the linked list, corresponding to the next depth $d+1$, must exist to store the neighbors of the vertices in the current bucket. The thread checks if the $next$ pointer in the current node $d$ is null. If it is null, a new node is created and added to the end of the list using a compare-and-swap (CAS) operation (\textit{see lines 25-33}).
+    
+    \item If $T_i$ is visiting a bucket at the $j$-th row such that $i \neq j$, it creates a local copy of the $j^{th}$ row and shuffles its vertices to ensure they are visited in a random order (\textit{see lines 39-41}). Visiting vertices in a random order when processing a bucket from a different row helps minimize the likelihood of multiple threads attempting to visit the same vertex simultaneously, ensuring more effective parallel work distribution. However, even if multiple threads do attempt to visit the same vertex at the same time, it does not affect the correctness of the algorithm.
+    
+    \item For each vertex $u$ in a row of $buckets$ that $T_i$ is visting, the thread checks whether it has been visited using the $vis$ array. If $u$ has not been visited, the following steps are performed for each neighbor $v$ of $u$ for which $dist[v] = -1$:
+    \begin{enumerate}
+        \item Add $v$ to the $buckets$ array in the next node corresponding to depth $d+1$ at the $i$-th row.
+        \item Update the $dist$ array at index $v$. The distance of $v$ from the source vertex is the distance of $u$ plus one.
+    \end{enumerate}
+    This is implemented in \textit{lines 2-13}.
+    
+    \item Once all neighbors of $u$ are added, the thread marks $u$ as visited by setting $vis[u]$ to \texttt{true} (\textit{see line 12}). Note that, unlike traditional BFS, the $vis$ array is updated only after all neighbors of a vertex have been added to the next node in the linked list.
+
+    \item Once all vertices in the bucket are processed, mark the bucket as done and move to the next bucket (\textit{see lines 44-45}).
+\end{enumerate}
+
+If no thread encounters a bucket to process, then there are no more vertices to visit. As a result, \textit{line $21$} will always evaluate to \texttt{true}, meaning no new nodes will be added to the linked list. Consequently, $curr$ will eventually become \texttt{null}, causing the algorithm to terminate.
+
+\begin{algorithm}
+\caption{Wait-Free BFS}
+\label{wf_bfs}
+\begin{algorithmic}[1]
+
+\Procedure{ProcessList}{L, sz, tid, next\_node}
+    \For{$i = 0$ to $sz - 1$}
+        \State $u \gets$ L[i]
+        \If{vis[$u$]} \textbf{continue} \EndIf
+        \ForAll{$v \in$ adj[$u$]}
+            \If{dist[$v$] = -1}
+                \State next\_node.buckets[tid].push\_back($v$)
+                \State dist[$v$] $\gets$ dist[$u$] + 1
+            \EndIf
+        \EndFor
+        \State vis[$u$] $\gets$ \texttt{true}
+    \EndFor
+\EndProcedure
+
+\vspace{0.5cm}
+
+\Procedure{WF\_BFS}{head, tid}
+    \State curr $\gets$ head
+    \While{curr $\neq$ NULL}
+        \State work\_on $\gets$ tid
+        \For{$i = 0$ to $num\_t - 1$}
+            \If{curr.done[work\_on] \textbf{or} \\
+                \hspace{4.2em} curr.buckets[work\_on].size = 0}
+                \State work\_on $\gets$ (work\_on + 1) mod num\_t
+                \State \textbf{continue}
+            \EndIf
+            \If{curr.next = NULL}
+                \State new\_node $\gets$ \textbf{new} ListNode()
+                \State new\_node.buckets.resize(num\_t)
+                \State new\_node.done.resize(num\_t)
+                \State expected $\gets$ NULL
+                \If{\textbf{not} CAS(curr.next, expected, new\_node)}
+                    \State \textbf{delete} new\_node
+                \EndIf
+            \EndIf
+            \State next\_node $\gets$ curr.next
+            \State sz $\gets$ curr.buckets[work\_on].size
+            \If{work\_on = tid}
+                \State ProcessList(curr.buckets[work\_on].list, sz, tid, next\_node)
+            \Else
+                \State list $\gets$ \textbf{new} array(sz)
+                \State copy(curr.buckets[work\_on].list[0:sz] to list)
+                \State shuffle(list)
+                \State ProcessList(list, sz, tid, next\_node)
+            \EndIf
+            \State curr.done[work\_on] $\gets$ \text{true}
+            \State work\_on $\gets$ (work\_on + 1) mod num\_t
+        \EndFor
+        \State curr $\gets$ curr.next
+    \EndWhile
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Buckets}
+
+The $buckets$ array in node $d$ contains one row for each thread. The $i$-th row, corresponding to $T_i$, contains a list of vertices to be visited by $T_i$ at depth $d$. However, the number of vertices in each row is not known in advance, requiring a dynamic data structure. Additionally, the structure must support the Multiple Reader Single Writer (MRSW) property to assist with helping. To meet these requirements, we use a custom dynamic array, denoted as $CDA$, to implement a row in the $buckets$ array. This array guarantees that vertices in bucket at node $d$ are at distance $d$ from the source vertex and every node at distance $d$ from the source vertex is eventually added to the row for some thread. 
+
+$CDA$ contains the following members:
+\begin{itemize}
+    \item \textbf{list}: A pointer to the dynamically allocated array storing the elements.
+    \item \textbf{size}: Tracks the number of elements currently stored.
+    \item \textbf{capacity}: Defines the current allocated space, doubling when resized.
+    \item \textbf{prevPointers}: A dynamic array to store pointers to old allocations for later cleanup. This structure is Single Reader Single Writer and hence, we can use an in-built structure like $std::vector$ in C++.
+\end{itemize}
+
+Writes are performed in the following steps:
+\begin{enumerate}
+    \item If the array is at full capacity, double its size by allocating a new array of twice the capacity. Copy all elements from the old array to the new one, store a pointer to the old array in the $prevPointers$ array, and update the $list$ pointer to reference the new array. Finally, update the size and write the new element to the array. Since insertions only occur at the end of the list, any thread reading from $prevPointers$ will read the same data for elements present in the list before doubling. Also, since only $T_i$ adds elements to its row, two Write operations on a row are never concurrent. 
+    \item If space is available, simply write the new element to the array and update the size.
+\end{enumerate}
+
+Storing pointers to old allocations instead of immediately freeing the memory ensures that any thread still reading from an old allocation does not access invalid memory.
+
+When creating a local copy, reads are performed in the following steps:
+\begin{enumerate}
+    \item Read the size of the array.
+    \item Read the pointer to the memory location storing the elements and then read the elements.
+\end{enumerate}
+
+A similar behavior to $CDA$ can be obtained by using a standard linked list. But the $CDA$ data structure performed much better in our experiments.
+
+The memory allocated for the old arrays is freed only after the BFS is completed. For fairness with other algorithms, we have included the time required for freeing the memory as part of our algorithm's total execution time. 
+
+The pseudocode for the $CDA$ data structure is shown in Algorithm \ref{custom_dynamic_array}.
+
+\begin{algorithm}
+\caption{Class Definition: CustomDynamicArray}
+\label{custom_dynamic_array}
+\begin{algorithmic}[1]
+\State \textbf{class} CustomDynamicArray
+\State \quad \textbf{public:}
+\State \quad \quad list: array of integers
+\State \quad \quad size $\gets$ 0
+\State \quad \quad capacity $\gets$ 1
+\State \quad \quad prevPointers: array of integer pointers
+\State \quad \quad 
+\State \quad \quad \textbf{function} Constructor()
+\State \quad \quad \quad list $\gets$ \textbf{new} integer array of size capacity
+\State \quad \quad \textbf{end function}
+\State \quad \quad 
+\State \quad \quad \textbf{function} push\_back(x)
+\State \quad \quad \quad \textbf{if} size = capacity \textbf{then}
+\State \quad \quad \quad \quad capacity $\gets$ 2 * capacity
+\State \quad \quad \quad \quad new\_list $\gets$ \textbf{new} integer array of size capacity
+\State \quad \quad \quad \quad copy list[0:size] to new\_list
+\State \quad \quad \quad \quad append list to prevPointers
+\State \quad \quad \quad \quad list $\gets$ new\_list
+\State \quad \quad \quad \textbf{end if}
+\State \quad \quad \quad list[size] $\gets$ x
+\State \quad \quad \quad size $\gets$ size + 1
+\State \quad \quad \textbf{end function}
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Proof of Correctness}
+
+Before proving the correctness of the algorithm, we need to define the concept of "regular" and "atomic" registers. The definitions are taken from \cite{aomp}. We use $\rightarrow$ to denote the happens-before relation. We use $v^i$ to denote the value written by $W^i$ and $R^i$ to denote any read call that returns the value $v^i$. Here, the write operations are indexed by their linearization points.
+
+
+\begin{definition}[Regular Register]
+For a register to be regular, it must satisfy the following properties:
+    \begin{itemize}
+        \item First, no read call returns a value from the future : $R^i \rightarrow W^i$ never happens.
+        \item Second, no read call returns a value from the distant past, that is, one that precedes the most recently written nonoverlapping value: $W^i \rightarrow W^j \rightarrow R^i$ never happens.
+    \end{itemize}
+\label{def:regular}
+\end{definition}
+
+\begin{definition}[Atomic Register]
+An atomic register satisfies one additional property:
+    \begin{itemize}
+        \item An earlier read cannot return a value later than that returned by a later read: $R^i \rightarrow R^j$, then $i \leq j$
+    \end{itemize}
+    \label{def:atomic}
+\end{definition}
+
+% \begin{itemize}
+%     \item \textbf{Regular Register}: For a register to be regular, it must satisfy the following properties:
+%     \begin{itemize}
+%         \item First, no read call returns a value from the future : $R^i \rightarrow W^i$ never happens.
+%         \item Second, no read call returns a value from the distant past, that is, one that precedes the most recently written nonoverlapping value: $W^i \rightarrow W^j \rightarrow R^i$ never happens.
+%     \end{itemize}
+%     \item \textbf{Atomic Register}: An atomic register satisfies one additional property:
+%     \begin{itemize}
+%         \item An earlier read cannot return a value later than that returned by a later read: $R^i \rightarrow R^j$, then $i \leq j$
+%     \end{itemize}
+% \end{itemize}
+
+Most modern processors guarantee that load and store operations on naturally aligned memory locations are atomic for sizes up to the processor's word size, typically 64 bits \cite{amdmanual} \cite{intelmanual}. This ensures that read and write operations on shared memory locations are atomic, provided they are naturally aligned. In our algorithm, this condition holds since shared memory locations store integers or pointers, which are naturally aligned.
+
+However, our algorithm does not require atomicity for correctness, it remains correct even if the registers are regular. We will use the above properties to prove the correctness.
+
+For processors that do not guarantee atomicity or regularity, the shared data structures should explicitly use atomic integers. We have considered both cases in our experiments.
+
+\subsubsection{BFS Correctness}
+
+We now prove that no vertex is assigned an incorrect distance and that the algorithm correctly computes the shortest distances for all vertices, provided that at least one thread does not fail. The proof is based on the following lemmas:
+
+\begin{lemma}
+\label{lem:1}
+At any depth $d$, if there exists a vertex $u$ at depth $d$, then exactly one node is added to the linked list for depth $d+1$.
+\end{lemma}
+\begin{proof}
+This is ensured by the CAS operation, where only one thread succeeds in adding a node. Once a node is added, no thread attempts to add another node at the same depth, as line $25$ in Algorithm \ref{wf_bfs} evaluates to \texttt{false} for all threads. Conversely, if no vertex exists at depth $d$, no node is added to the linked list for depth $d+1$. This guarantees that the algorithm terminates when all vertices have been visited.
+\end{proof}
+
+\begin{lemma}
+\label{lem:2}
+Every vertex at depth $d$ will be processed by some thread, assinging the correct distance to all its neighbors at depth $d+1$, before any thread processes a vertex at depth $d+1$.
+\end{lemma}
+\begin{proof}
+To prove this, we analyze various points where threads can fail in Algorithm \ref{wf_bfs}, assuming that at least one thread does not fail. The following cases are considered:
+
+\begin{itemize}
+    \item A thread fails after executing line $8$ but before executing line $9$ for some vertex $v$. In this case, the distance of $v$ is not updated, although it is added to the bucket in the next node. This is acceptable because whichever thread does not fail will read $dist[v] = -1$, update it to the correct value, and add $v$ again to the bucket in a different row in the next node.
+    
+    \item A thread fails after executing line $9$ but before executing line $10$ for some vertex $v$. Here, the distance of $v$ is already updated, and $v$ has also been added to the bucket in the next node. Even if the thread fails at this point, the information related to $v$ is not lost, and hence it is acceptable.
+    
+    \item A thread fails after executing line $11$ but before executing line $12$ for some vertex $u$. In this case, all neighbors of $u$ have already been updated and added to the bucket in the next node. However, since $u$ is not yet marked as visited, another thread will process $u$ and try to update the distances of its neighbors. This does not affect the final distances of any vertices.
+    
+    \item A thread fails after executing line $12$ but before executing line $13$ for some vertex $u$. Since $u$ has already been marked as visited, it will not be processed again and no information is lost here.
+    
+    \item A thread fails before marking the bucket as done. In this case, another thread that does not fail will visit this bucket, see that all vertices are already visited, and mark the bucket as done. Hence, no information is lost here.
+    
+    \item A thread fails after marking the bucket as done. Here, since the bucket is already marked as done, it will not be processed again.
+\end{itemize}
+
+Note that updating the distance of a vertex only after adding it to the bucket in the next node and marking a vertex as visited only after updating the distances of all its neighbors is important for the correctness of the algorithm.
+
+For instance, if the distance of a vertex is updated before adding it to the bucket in the next node, a scenario may arise where the thread responsible for updating the distance is indefinitely delayed. Since the distance has already been updated, no other thread will add the vertex to the bucket in the next node, leading to incorrect distance updates for its neighbors.
+
+These cases collectively ensure that the distances of all vertices at depth $d+1$ are updated before any thread processes a vertex at depth $d+1$.
+\end{proof}
+
+\begin{lemma}
+\label{lem:3}
+If a thread is processing a vertex $u$ at depth $d$, then it will not update the distance of any vertex at depth $\leq d$.
+\end{lemma}
+\begin{proof}
+To prove this, it is sufficient to show that the condition in line $7$ of Algorithm \ref{wf_bfs} never evaluates to \texttt{true} for a vertex at depth $\leq d$. Let $u$ be a vertex at depth $d$, and let $v$ be a vertex at depth $d' \leq d$ such that there is an edge between $u$ and $v$. We analyze the following cases:
+\begin{itemize}
+    \item When thread $T_i$ visits $u$ and attempts to update $dist[v]$, it first reads $dist[v]$. If there are no concurrent writes to $dist[v]$, then $T_i$ will not read $-1$ since, by Lemma \ref{lem:2}, distances are updated in level order.
+
+    \item Suppose there is a concurrent write operation on $dist[v]$ by some thread $T_j$ ($j \neq i$). This may occur if $T_j$ was at depth $d'-1$ and was delayed after reading $dist[v] = -1$ but before updating it. However, $T_j$ will correctly write $d'$ to $dist[v]$.
+    
+    Since registers are at least regular (Definition: \ref{def:regular}), overlapping reads and writes behave as follows: A read operation either returns the old value (the value before the write operation) or the new value (the one just written). In this case, both the old and new values are $d'$, meaning the read operation will return $d'$. Thus, the condition in line $7$ will not evaluate to \texttt{true} for $T_i$.
+\end{itemize}
+
+This ensures that the distance of a vertex at depth $d' \leq d$ is never updated by a thread processing a vertex at depth $d$.
+\end{proof}
+
+Together, these lemmas establish that the algorithm correctly assigns distances to all vertices and terminates once all vertices have been visited. Furthermore, the algorithm remains wait-free, as the properties proven in the lemmas hold regardless of thread failures, and no thread depends on the progress of another to complete its execution.
+
+\subsubsection{Buckets/CDA Correctness}
+
+The order of operations is crucial to avoid inconsistent data access. For concurrent reads and writes, if a write operation does not trigger an inner array resize, the read operation remains unaffected. However, if resizing occurs, we define the following terms: Let $sz_{old}$ and $sz_{new}$ be the old and new sizes of the array, respectively. Let $ptr_{old}$ and $ptr_{new}$ denote the pointers to the old and new arrays, respectively.  
+
+Since the registers are at least regular (Definition: \ref{def:regular}), a read operation will return only one of two possible values: either $sz_{old}$ or $sz_{new}$, and correspondingly, either $ptr_{old}$ or $ptr_{new}$. We analyze two cases:
+
+\begin{itemize}
+    \item \textbf{Case 1}: If the reader thread reads the size as $sz_{old}$, it may read either $ptr_{old}$ or $ptr_{new}$. However, both memory locations contain at least $sz_{old}$ elements, ensuring safe access.  If the reader thread reads $ptr_{old}$, it will not read the last vertex that was added by the slow thread. However, this is acceptable, since the vertex must also be present in some other bucket following \ref{lem:2}.
+    
+    \item \textbf{Case 2}: If the reader thread reads the size as $sz_{new}$, it is guaranteed to read $ptr_{new}$ and not $ptr_{old}$, since the size is updated only after updating the pointer.
+\end{itemize}
+
+These conditions ensure that a reader thread always observes a consistent state of the data structure.
+
+Thus, the correctness of the algorithm is established.
+

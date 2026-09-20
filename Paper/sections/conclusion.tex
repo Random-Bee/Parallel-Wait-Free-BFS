@@ -1,0 +1,14 @@
+\section{Conclusion}
+\label{conclusion_sec}
+
+In this paper, we presented a novel parallel wait-free breadth-first search (BFS) algorithm that significantly improves performance by minimizing synchronization overhead and guaranteeing progress across all threads. Our BFS algorithm ensures wait-freedom by designing operations such that every thread can complete its work independently without waiting on others, even in the presence of thread delays or failures. This property enables strong scalability and robustness in parallel graph traversal, particularly on large and irregular graphs.
+
+Additionally, the BFS algorithm incorporates a helping mechanism that enables faster threads to assist in processing unfinished work. Instead of waiting, threads dynamically help others complete their tasks, improving load balancing and ensuring that no single thread becomes a bottleneck. This cooperative behavior further strengthens the algorithm's wait-free guarantees and enhances overall throughput.
+
+A key insight was the development of a Custom Dynamic Array (CDA) that supports multiple-reader single-writer semantics in a wait-free manner. Specifically, when a writer thread needs to expand the array to accommodate more vertices, ongoing readers are unaffected and continue operating safely on the previous version of the array. The CDA, combined with our work distribution strategy, allowed for efficient load balancing across threads without introducing synchronization bottlenecks.
+
+Our experimental evaluation across synthetic and real-world graphs shows that the proposed wait-free BFS algorithm consistently outperforms existing parallel BFS implementations, achieving significant speedups while maintaining robustness across diverse settings.
+
+We also developed three parallel algorithms for connected components (CC) detection: one based on parallel BFS traversal, one relying solely on atomic operations, and one leveraging a lock-free disjoint-set union (DSU) structure. Our extensive experimental evaluation demonstrates that the BFS-based approach is most effective for small to moderate numbers of components, while the DSU-based method excels when the number of components is large. The atomic-only approach, although conceptually simple, proved less efficient in practice.
+
+Overall, our results highlight the effectiveness of wait-free techniques for parallel graph traversal and connected components detection. Future work includes extending our framework to handle dynamic graphs, further optimizing memory management, and applying our techniques to other graph problems such as shortest paths and spanning tree construction.

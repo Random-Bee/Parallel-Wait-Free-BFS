@@ -1,0 +1,193 @@
+\clearpage
+\appendix
+\section*{APPENDIX}
+
+\section{Tables}
+\label{sec:tables}
+
+The following tables present the execution times of the BFS and connected components algorithms for various configurations, including different numbers of vertices, graph densities, and thread counts. The results are based on the experiments described in the main text.
+
+\begin{table}[ht]
+    \small
+    \centering
+    \begin{tabular}{|c|c|c|c|c|}
+        \hline
+        \textbf{Vertices} & \textbf{Serial} & \textbf{Wait-Free} & \textbf{Wait-Free (Atomic)} & \textbf{Lock-Based} \\
+        \hline
+        $1e5$ & 139344 & 19755 & 22067 & 61038 \\
+        $2e5$ & 311584 & 33606 & 37080 & 114281 \\
+        $3e5$ & 488414 & 47269 & 54004 & 169902 \\
+        $4e5$ & 663065 & 60732 & 70643 & 230551 \\
+        $5e5$ & 835574 & 74156 & 86906 & 284763 \\
+        $6e5$ & 1015243 & 86748 & 103275 & 338586 \\
+        \hline
+    \end{tabular}
+    \caption{Experiment \ref{bfs:exp1} : Execution time of BFS for varying number of vertices.}
+    \label{tab:exp1}
+\end{table}
+
+\begin{table}[ht]
+    \small
+    \centering
+    \begin{tabular}{|c|c|c|c|}
+        \hline
+        \textbf{Threads} & \textbf{Wait-Free} & \textbf{Wait-Free (Atomic)} & \textbf{Lock-Based} \\
+        \hline
+        $2$ & 471627 & 550741 & 2267025 \\
+        $4$ & 251506 & 296599 & 1036392 \\
+        $8$ & 136896 & 161544 & 553816 \\
+        $16$ & 74470 & 86648 & 285779 \\
+        $32$ & 48459 & 53259 & 217453 \\
+        $64$ & 48378 & 53296 & 147583 \\
+        \hline
+    \end{tabular}
+    \caption{Experiment \ref{bfs:exp3} : Execution time of BFS algorihtms for varying number of threads on random graph.}
+    \label{tab:exp3_1}
+\end{table}
+
+\begin{table}[ht]
+    \small
+    \centering
+    \begin{tabular}{|c|c|c|c|}
+        \hline
+        \textbf{Threads} & \textbf{Wait-Free} & \textbf{Wait-Free (Atomic)} & \textbf{Lock-Based} \\
+        \hline
+        $2$ & 2126836 & 2650480 & 4365973 \\
+        $4$ & 1130817 & 1420545 & 2232363 \\
+        $8$ & 601362 & 755491 & 1192019 \\
+        $16$ & 362708 & 440648 & 623655 \\
+        $32$ & 235820 & 269026 & 399018 \\
+        $64$ & 172725 & 233587 & 294441 \\
+        \hline
+    \end{tabular}
+    \caption{Experiment \ref{bfs:exp3} : Execution time of BFS algorithms for varying number of threads on \textit{LiveJournal} \cite{livejournal} graph.}
+    \label{tab:exp3_2}
+\end{table}
+
+\begin{table}[ht]
+    \small
+    \centering
+    \begin{tabular}{|c|c|c|c|}
+        \hline
+        \textbf{Threads} & \textbf{Wait-Free} & \textbf{Wait-Free (Atomic)} & \textbf{Lock-Based} \\
+        \hline
+        $2$ & 25707716 & 35663801 & 50833290 \\
+        $4$ & 13594550 & 19191065 & 33334874 \\
+        $8$ & 7132199 & 10601925 & 16136456 \\
+        $16$ & 5038638 & 7583175 & 10040580 \\
+        $32$ & 2527066 & 4045410 & 6730842 \\
+        $64$ & 2008005 & 2976349 & 5643021 \\
+        \hline
+    \end{tabular}
+    \caption{Experiment \ref{bfs:exp3} : Execution time of BFS for varying number of threads on \textit{Sina Weibo} \cite{sinaweibo} graph.}
+    \label{tab:exp3_3}
+\end{table}
+
+\begin{table*}
+    \small
+    \centering
+    \begin{tabular}{|c|c|c|c|c|}
+        \hline
+        \textbf{Density (Percent)} & \textbf{Serial} & \textbf{Wait-Free} & \textbf{Wait-Free (Atomic)} & \textbf{Lock-Based} \\
+        \hline
+        $1$ & 247092 & 20563 & 21823 & 66997 \\
+        $5$ & 1186723 & 52643 & 57167 & 195032 \\
+        $10$ & 2339696 & 89930 & 100727 & 299954 \\
+        $25$ & 5801718 & 192167 & 213233 & 506012 \\
+        $50$ & 11578280 & 378123 & 431672 & 814425 \\
+        $100$ & 23380493 & 737423 & 818978 & 1431971 \\
+        \hline
+    \end{tabular}
+    \caption{Experiment \ref{bfs:exp2} : Execution time of BFS algorithms for varying graph densities.}
+    \label{tab:exp2}
+\end{table*}
+
+\begin{table*}
+    \small
+    \centering
+    \begin{tabular}{|c|c|c|c|c|c|c|}
+        \hline
+        \textbf{Components} & \textbf{Serial} & \textbf{Coordinated BFS} & \textbf{CAS-Based} & \textbf{Reduced-DSU} & \textbf{Existing} \\
+        \hline
+        $1$ & 1763774 & 89283 & 4605254 & 481650 & 494473 \\
+        $10$ & 1561431 & 89139 & 1925396 & 452921 & 473713 \\
+        $50$ & 1514085 & 122606 & 530235 & 473276 & 487344 \\
+        $100$ & 1444857 & 156597 & 489922 & 351101 & 456510 \\
+        $500$ & 1204890 & 427338 & 334518 & 253943 & 472979 \\
+        $1000$ & 1165937 & 700199 & 265600 & 211992 & 467340 \\
+        \hline
+    \end{tabular}
+    \caption{Experiment \ref{cc:exp1} : Execution time of connected components for varying number of components.}
+    \label{tab:exp4}
+\end{table*}
+
+\begin{table*}
+    \centering
+    \begin{tabular}{|c|c|c|c|c|c|c|}
+        \hline
+        \textbf{Vertices(Per Component)} & \textbf{Serial} & \textbf{Coordinated BFS} & \textbf{CAS-Based} & \textbf{Reduced-DSU} & \textbf{Existing} \\
+        \hline
+        $1e4$ & 1453219 & 152577 & 478270 & 359782 & 451375 \\
+        $2e4$ & 3183386 & 244377 & 967575 & 712586 & 953522 \\
+        $3e4$ & 5019183 & 331578 & 1481648 & 1130626 & 1457245 \\
+        $4e4$ & 6930431 & 402903 & 2004614 & 1408706 & 1882721 \\
+        $5e4$ & 9495439 & 513397 & 2604485 & 1866233 & 2480675 \\
+        \hline
+    \end{tabular}
+    \caption{Experiment \ref{cc:exp2} : Execution time of connected components for varying number of vertices.}
+    \label{tab:exp5}
+\end{table*}
+
+\begin{table*}
+    \small
+    \centering
+    \begin{tabular}{|c|c|c|c|c|c|c|c|}
+        \hline
+        \textbf{Threads} & \textbf{Coordinated BFS} & \textbf{CAS-Based} & \textbf{Reduced-DSU} & \textbf{Existing} \\
+        \hline
+        $2$ & 5771680 & 14116075 & 14365772 & 20918563 \\
+        $4$ & 3254026 & 9786833 & 10035562 & 11630302 \\
+        $8$ & 1829292 & 7407494 & 7123372 & 6619472 \\
+        $16$ & 991526 & 5363631 & 4880461 & 5024664 \\
+        $32$ & 545344 & 3199148 & 2767063 & 3205408 \\
+        $64$ & 490756 & 2491560 & 1814275 & 2728337 \\
+        \hline
+    \end{tabular}
+    \caption{Experiment \ref{cc:exp3} : Execution time of connected components for varying number of threads.}
+    \label{tab:exp6}
+\end{table*}
+
+\begin{table*}
+    \small
+    \centering
+    \begin{tabular}{|c|c|c|c|c|c|c|c|}
+        \hline
+        \textbf{Density (Percent)} & \textbf{Serial} & \textbf{Coordinated BFS} & \textbf{CAS-Based} & \textbf{Reduced-DSU} & \textbf{Existing} \\
+        \hline
+        $0.0002$ & 270152 & 136988494 & 226818 & 71176 & 111844 \\
+        $0.0004$ & 365726 & 57024239 & 548988 & 70460 & 169343 \\
+        $0.001$ & 391727 & 6325528 & 734723 & 75408 & 206833 \\
+        $0.002$ & 455994 & 281690 & 905710 & 88115 & 253037 \\
+        $0.004$ & 567360 & 42533 & 1314549 & 124377 & 309005 \\
+        $0.01$ & 985679 & 60102 & 2382184 & 233327 & 383737 \\
+        \hline
+    \end{tabular}
+    \caption{Experiment \ref{cc:exp4} : Execution time of connected components for varying graph densities.}
+    \label{tab:exp7}
+\end{table*}
+
+
+\section{Atomic CAS-Based Parallel Labeling}
+\label{sec:atomic_cc}
+
+In this algorithm, the $comps$ array is an array of atomic integers, initialized to $-1$, and $comp$ is an atomic integer, initialized to $0$. We use the atomic compare-and-swap (CAS) operation to assign the component identifier to each vertex. Each thread is statically assigned a set of vertices and looks for an unassigned vertex, attempting to assign it a component ID using CAS. The atomic fetch-and-add operation increments the $comp$ variable, providing the ID to be assigned to the component. If a thread fails to update the vertex, it indicates that another thread has already assigned a component ID, and the thread moves on to the next unassigned vertex. If the thread succeeds, it enqueues the vertex into a queue and initiates a BFS from that vertex.
+
+Since multiple threads may simultaneously attempt to assign component IDs to the same vertex, we use CAS operations to ensure that each vertex is assigned a unique component ID exactly once. For every vertex $u$ dequeued from the queue, the thread attempts to assign the component ID to all its neighbors using CAS in a loop. For a neighbor $v$ of $u$, if the CAS operation succeeds, the thread enqueues $v$ into the queue and continues its operation. If the CAS operation fails, the thread checks whether the component ID of $v$ is less than the current component ID being assigned. If it is, the thread stops processing this component and moves on to the next unassigned vertex. If the component ID of $v$ is greater than the current component ID, the thread retries the CAS operation. If the component ID of $v$ equals the current component ID, the thread proceeds to the next neighbor of $u$.
+
+\subsubsection{Proof of Correctness}
+
+Since there are a finite number of threads, the component ID will be assigned by the thread with the lowest component ID. This guarantees that all vertices in the same connected component are assigned the same component ID, which corresponds to the lowest component ID among all threads that processed the component.
+
+Furthermore, since each component ID is used only once, the assigned component IDs remain unique.
+
+These properties ensure that the algorithm correctly assigns component IDs to all vertices.

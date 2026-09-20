@@ -3,9 +3,6 @@
 using namespace std;
 using namespace chrono;
 
-#pragma GCC optimize("O3,unroll-loops")
-#pragma GCC target("avx2,bmi,bmi2,lzcnt,popcnt")
-
 int N, M;
 vector<vector<int>> adj;
 vector<int> dist, vis;

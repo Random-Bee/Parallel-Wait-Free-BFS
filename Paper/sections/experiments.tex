@@ -1,0 +1,552 @@
+\section{Experiments}
+\label{exp_sec}
+
+Our experiments were conducted on \textbf{AMD EPYC 7452 32-Core Processor} with \textbf{256} GB RAM. The code was compiled using \textbf{g++ 7.5.0} without any compiler optimizations. All the times reported are in microseconds. We only show the plots here, the tables are available in the appendix \ref{sec:tables}.
+\subsection{Wait-Free BFS}
+
+We evaluate the performance of our wait-free BFS algorithm using random graphs generated with varying sizes and densities as well as real world datasets.
+
+We evaluate two versions of the wait-free BFS algorithm, one that relies on hardware guarantees for atomicity and another that explicitly marks shared variables as atomic.
+
+We also compare our BFS algorithm with Bader and Madduri's \cite{bader_bfs} lock-based BFS algorithm.
+
+\subsubsection{Experimental Results}
+
+\paragraph{Experiment 1: Varying Number of Vertices}
+\label{bfs:exp1}
+We fix the number of threads at 16 and vary the number of vertices in the graph keeping number of edges proportional to the number of vertices (50 times). Figure~\ref{fig:exp1} present the results.
+
+\pgfplotstableread[col sep=space]{
+    Vertices   Serial   WaitFree   WaitFreeAtomic   LockBased
+    1e5        139344.6     19755.4    22067.2          61038
+    2e5        311584.8     33606.8    37080            114281.8
+    3e5        488414.8     47269.8    54004            169902.2
+    4e5        663065.4     60732.4    70643.4          230551
+    5e5        835574.8     74156.2    86906.2          284763.8
+    6e5        1015243      86748.6    103275.8         338586.6
+}\bfsA
+
+\begin{figure}
+    \centering
+    \begin{tikzpicture}
+    \begin{axis}[
+        width=0.45\textwidth,
+        height=0.3\textwidth,
+        xlabel={Vertices},
+        ylabel={Execution Time ($\mu$s)},
+        legend pos=north west,
+        xtick=data,
+        xticklabels={1,2,3,4,5,6},
+        ymajorgrids=true,
+        grid style=dashed,
+        enlarge x limits=0.05,
+        tick label style={font=\small},
+        label style={font=\small},
+        legend style={font=\small},
+        legend style={
+            font=\scriptsize,
+            cells={anchor=west},
+            inner sep=2pt,
+            column sep=2pt
+        }
+    ]
+    
+    \addplot table[x=Vertices, y=Serial] {\bfsA};
+    \addlegendentry{Serial}
+    
+    \addplot table[x=Vertices, y=WaitFree] {\bfsA};
+    \addlegendentry{Wait-Free}
+    
+    \addplot table[x=Vertices, y=WaitFreeAtomic] {\bfsA};
+    \addlegendentry{Wait-Free (Atomic)}
+    
+    \addplot table[x=Vertices, y=LockBased] {\bfsA};
+    \addlegendentry{Lock-Based}
+    
+    \end{axis}
+    \end{tikzpicture}
+    \caption{Execution time of BFS for varying number of vertices.}
+    \Description{Execution time of BFS for varying number of vertices.}
+    \label{fig:exp1}
+\end{figure}
+
+From Figure \ref{fig:exp1}, we observe that as the number of vertices increases, the wait-free BFS shows a consistent and substantial speedup compared to the existing parallel BFS with the wait-free version achieving up to $11\times$ speedup over the serial BFS and $4\times$ speedup over the existing parallel BFS by using $16$ threads. The version relying on hardware atomicity performs slightly better than the explicitly atomic version, but both variants achieve a significant speedup.
+
+\paragraph{Experiment 2: Varying Graph Density}
+\label{bfs:exp2}
+We fix the number of vertices at $5e4$, number of threads at 64 and vary the density of the graph. Figure~\ref{fig:exp2} present the results.
+
+\pgfplotstableread[col sep=space]{
+    Density   Serial   WaitFree   WaitFreeAtomic   LockBased
+    1         247092.4     20563.6    21823            66997.6
+    5         1186723      52643      57167.8          195032
+    10        2339696.8    89930.4    100727.2         299954.2
+    25        5801718.6    192167     213233.6         506012.4
+    50        11578280.2   378123.4   431672.8         814425.8
+    100       23380493     737423     818978.8         1431971
+}\bfsB
+
+\begin{figure}
+    \centering
+    \begin{tikzpicture}
+    \begin{axis}[
+        width=0.45\textwidth,
+        height=0.3\textwidth,
+        xlabel={Density (Percent)},
+        ylabel={Execution Time ($\mu$s)},
+        legend pos=north west,
+        xtick=data,
+        xticklabels={1,5,10,25,50,100},
+        ymajorgrids=true,
+        grid style=dashed,
+        enlarge x limits=0.05,
+        tick label style={font=\small},
+        label style={font=\small},
+        legend style={font=\small},
+        legend style={
+            font=\scriptsize,
+            cells={anchor=west},
+            inner sep=2pt,
+            column sep=2pt
+        }
+    ]
+    
+    \addplot table[x=Density, y=Serial] {\bfsB};
+    \addlegendentry{Serial}
+    
+    \addplot table[x=Density, y=WaitFree] {\bfsB};
+    \addlegendentry{Wait-Free}
+    
+    \addplot table[x=Density, y=WaitFreeAtomic] {\bfsB};
+    \addlegendentry{Wait-Free (Atomic)}
+    
+    \addplot table[x=Density, y=LockBased] {\bfsB};
+    \addlegendentry{Lock-Based}
+    
+    \end{axis}
+    \end{tikzpicture}
+    \caption{Execution time of BFS algorithms for varying graph densities.}
+    \Description{Execution time of BFS algorithms for varying graph densities.}
+    \label{fig:exp2}
+\end{figure}
+
+From Figure \ref{fig:exp2}, we observe that  the wait-free BFS maintains its efficiency as graph density increases. The speedup remains consistent across different densities, with the wait-free version offering up to $32\times$ faster execution than the sequential BFS and $2\times$ faster than existing parallel BFS using $64$ threads, especially for denser graphs. While both versions exhibit increasing overhead with higher densities, the explicitly atomic variant incurs a modest performance penalty.
+
+\paragraph{Experiment 3: Varying Number of Threads}
+\label{bfs:exp3}
+We perform the experiment on a random graph with $5e5$ vertices and $2.5e7$ edges. We also perform the experiment two real world datasets, \textit{LiveJournal} \cite{livejournal} and \textit{Sina Weibo} \cite{sinaweibo}. Figure~\ref{fig:exp3_1} present the results for random graph, Figure~\ref{fig:exp3_2} present the results for \textit{LiveJournal} \cite{livejournal} graph and, Figure~\ref{fig:exp3_3} present the results for \textit{Sina Weibo} \cite{sinaweibo} graph.
+
+\pgfplotstableread[col sep=space]{
+    Threads   WaitFree   WaitFreeAtomic   LockBased
+    2         471627.4     550741      2267025.2
+    4         251506.2     296599.6    1036392.2
+    8         136896.6     161544.2    553816.8
+    16        74470.8      86648.6     285779.8
+    32        48459.8      53259.2     217453.2
+    64        48378.6      53296       147583.6
+}\bfsC
+
+\begin{figure}
+    \centering
+    \begin{tikzpicture}
+    \begin{axis}[
+        width=0.45\textwidth,
+        height=0.3\textwidth,
+        xlabel={Threads},
+        ylabel={Execution Time ($\mu$s)},
+        legend pos=north east,
+        xtick=data,
+        xticklabels={2,4,8,16,32,64},
+        ymajorgrids=true,
+        grid style=dashed,
+        enlarge x limits=0.05,
+        tick label style={font=\small},
+        label style={font=\small},
+        legend style={font=\small},
+        legend style={
+            font=\scriptsize,
+            cells={anchor=west},
+            inner sep=2pt,
+            column sep=2pt
+        }
+    ]
+    
+    \addplot table[x=Threads, y=WaitFree] {\bfsC};
+    \addlegendentry{Wait-Free}
+    
+    \addplot table[x=Threads, y=WaitFreeAtomic] {\bfsC};
+    \addlegendentry{Wait-Free (Atomic)}
+    
+    \addplot table[x=Threads, y=LockBased] {\bfsC};
+    \addlegendentry{Lock-Based}
+    
+    \end{axis}
+    \end{tikzpicture}
+    \caption{Execution time of BFS algorihtms for varying number of threads on random graph.}
+    \Description{Execution time of BFS algorihtms for varying number of threads on random graph.}
+    \label{fig:exp3_1}
+\end{figure}
+
+\pgfplotstableread[col sep=space]{
+    Threads   WaitFree   WaitFreeAtomic   LockBased
+    2         2126836.8     2650480.2    4365973.8
+    4         1130817.4     1420545.4    2232363
+    8         601362        755491.6     1192019.2
+    16        362708.6      440648.8     623655.4
+    32        235820.6      269026.2     399018.6
+    64        172725.2      233587.4     294441.6
+}\bfsD
+
+\begin{figure}
+    \centering
+    \begin{tikzpicture}
+    \begin{axis}[
+        width=0.45\textwidth,
+        height=0.3\textwidth,
+        xlabel={Threads},
+        ylabel={Execution Time ($\mu$s)},
+        legend pos=north east,
+        xtick=data,
+        xticklabels={2,4,8,16,32,64},
+        ymajorgrids=true,
+        grid style=dashed,
+        enlarge x limits=0.05,
+        tick label style={font=\small},
+        label style={font=\small},
+        legend style={font=\small},
+        legend style={
+            font=\scriptsize,
+            cells={anchor=west},
+            inner sep=2pt,
+            column sep=2pt
+        }
+    ]
+    
+    \addplot table[x=Threads, y=WaitFree] {\bfsD};
+    \addlegendentry{Wait-Free}
+    
+    \addplot table[x=Threads, y=WaitFreeAtomic] {\bfsD};
+    \addlegendentry{Wait-Free (Atomic)}
+    
+    \addplot table[x=Threads, y=LockBased] {\bfsD};
+    \addlegendentry{Lock-Based}
+    
+    \end{axis}
+    \end{tikzpicture}
+    \caption{Execution time of BFS algorithms for varying number of threads on \textit{LiveJournal} \cite{livejournal} graph.}
+    \Description{Execution time of BFS algorithms for varying number of threads on \textit{LiveJournal} \cite{livejournal} graph.}
+    \label{fig:exp3_2}
+\end{figure}
+
+\pgfplotstableread[col sep=space]{
+    Threads   WaitFree   WaitFreeAtomic   LockBased
+    2         25707716.4     35663801    50833290.2
+    4         13594550.8     19191065.4  33334874.2
+    8         7132199        10601925    16136456.4
+    16        5038638        7583175     10040580.6
+    32        2527066.8      4045410.6   6730842.4
+    64        2008005        2976349     5643021.2
+}\bfsE
+
+\begin{figure}
+    \centering
+    \begin{tikzpicture}
+    \begin{axis}[
+        width=0.45\textwidth,
+        height=0.3\textwidth,
+        xlabel={Threads},
+        ylabel={Execution Time ($\mu$s)},
+        legend pos=north east,
+        xtick=data,
+        xticklabels={2,4,8,16,32,64},
+        ymajorgrids=true,
+        grid style=dashed,
+        enlarge x limits=0.05,
+        tick label style={font=\small},
+        label style={font=\small},
+        legend style={font=\small},
+        legend style={
+            font=\scriptsize,
+            cells={anchor=west},
+            inner sep=2pt,
+            column sep=2pt
+        }
+    ]
+    
+    \addplot table[x=Threads, y=WaitFree] {\bfsE};
+    \addlegendentry{Wait-Free}
+    
+    \addplot table[x=Threads, y=WaitFreeAtomic] {\bfsE};
+    \addlegendentry{Wait-Free (Atomic)}
+    
+    \addplot table[x=Threads, y=LockBased] {\bfsE};
+    \addlegendentry{Lock-Based}
+    
+    \end{axis}
+    \end{tikzpicture}
+    \caption{Execution time of BFS for varying number of threads on \textit{Sina Weibo} \cite{sinaweibo} graph.}
+    \Description{Execution time of BFS for varying number of threads on \textit{Sina Weibo} \cite{sinaweibo} graph.}
+    \label{fig:exp3_3}
+\end{figure}
+
+This experiment explores the performance impact of varying thread counts on both random and real-world graphs. On both the \textit{LiveJournal} and \textit{Sina Weibo} graphs, the wait-free BFS reduces execution time by a factor of $2\times$ to $3\times$ compared to the existing parallel BFS and more than $20\times$ compared to the serial BFS on $64$ threads. The performance improvement is more pronounced in larger real-world graphs, where the algorithm's ability to distribute work efficiently across threads becomes more critical.
+
+\paragraph{Hardware Atomicity vs. Explicit Atomic Operations}
+Across all experiments, the variant that relies on hardware atomicity consistently outperforms the explicitly atomic version, albeit by a small margin. The overhead introduced by explicit atomic operations becomes more apparent in high-density graphs and larger thread counts, though the overall performance remains substantially better than the existing BFS.
+
+\paragraph{Summary}
+Our experimental evaluation demonstrates that the proposed wait-free BFS algorithm significantly outperforms the existing BFS algorithm across various graph sizes, densities, and thread counts. The wait-free BFS algorithm demonstrates robust scalability and efficiency across diverse experimental settings. It offers substantial performance improvements over existing BFS implementations, making it well-suited for large-scale graph processing in parallel environments.
+
+\subsection{Connected Components}
+
+We evaluate the performance of our connected components algorithms using random graphs generated with varying sizes and densities.
+
+We also compare our algorithms with the existing connected components algorithm using wait-free parallel union-find structure proposed by Anderson and Woll \cite{anderson_dsu}.
+
+\subsubsection{Experimental Results}
+
+\paragraph{Experiment 1: Varying Number of Components}
+\label{cc:exp1}
+
+We fix the number of threads at 64, number of vertices at $1e6$, number of edges at $5e7$ and vary the number of components in the graph. Figure~\ref{fig:exp4} present the results.
+
+\pgfplotstableread[col sep=space]{
+    Components   Serial   Coordinated_BFS  Reduced_DSU   Existing
+    1            1763774    89283    481650    494473
+    10           1561431    89139    452921    473713
+    50           1514085    122606   403276    487344
+    100          1444857    156597   351101    456510
+    500          1204890    427338   253943    472979
+    1000         1165937    700199   211992    467340
+}\ccA
+
+\begin{figure}
+    \centering
+    \begin{tikzpicture}
+    \begin{axis}[
+        width=0.45\textwidth,
+        height=0.3\textwidth,
+        xlabel={Components},
+        ylabel={Execution Time ($\mu$s)},
+        legend style={at={(0.05,0.55)},anchor=west},
+        xtick=data,
+        xticklabels={1,10,50,100,500,1000},
+        ymajorgrids=true,
+        grid style=dashed,
+        enlarge x limits=0.05,
+        tick label style={font=\small},
+        label style={font=\small},
+        legend style={font=\small},
+        legend style={
+            font=\scriptsize,
+            cells={anchor=west},
+            inner sep=2pt,
+            column sep=2pt
+        },
+        xmode=log
+    ]
+    
+    \addplot table[x=Components, y=Serial] {\ccA};
+    \addlegendentry{Serial}
+    
+    \addplot table[x=Components, y=Coordinated_BFS] {\ccA};
+    \addlegendentry{Coordinated BFS}
+    
+    \addplot table[x=Components, y=Reduced_DSU] {\ccA};
+    \addlegendentry{Reduced-DSU}
+    
+    \addplot table[x=Components, y=Existing] {\ccA};
+    \addlegendentry{Existing}
+    
+    \end{axis}
+    \end{tikzpicture}
+    \caption{Execution time of connected components for varying number of components.}
+    \Description{Execution time of connected components for varying number of components.}
+    \label{fig:exp4}
+\end{figure}
+
+Reduced-DSU Component Merging consistently outperforms the existing algorithm across all cases, with a notable advantage when the number of components increases. Coordinated Wait-Free BFS Labeling shows excellent performance for smaller component counts but scales poorly with an increasing number of components.
+
+\paragraph{Experiment 2: Varying Number of Vertices}
+\label{cc:exp2}
+
+We fix the number of threads at 64, number of components at $100$ and vary the number of vertices in the graph keeping number of edges proportional to the number of vertices (50 times). Figure~\ref{fig:exp5} present the results.
+
+\pgfplotstableread[col sep=space]{
+    Vertices   Serial   Coordinated_BFS   Reduced_DSU   Existing
+    1e4        1453219     152577   359782     451375
+    2e4        3183386     244377   712586     953522
+    3e4        5019183     331578   1130626    1457245
+    4e4        6930431     402903   1408706    1882721
+    5e4        9495439     513397   1866233    2480675
+}\ccB
+
+\begin{figure}
+    \centering
+    \begin{tikzpicture}
+    \begin{axis}[
+        width=0.45\textwidth,
+        height=0.3\textwidth,
+        xlabel={Vertices (Per Component)},
+        ylabel={Execution Time ($\mu$s)},
+        legend pos=north west,
+        xtick=data,
+        xticklabels={1,2,3,4,5},
+        ymajorgrids=true,
+        grid style=dashed,
+        enlarge x limits=0.05,
+        tick label style={font=\small},
+        label style={font=\small},
+        legend style={font=\small},
+        legend style={
+            font=\scriptsize,
+            cells={anchor=west},
+            inner sep=2pt,
+            column sep=2pt
+        }
+    ]
+    
+    \addplot table[x=Vertices, y=Serial] {\ccB};
+    \addlegendentry{Serial}
+    
+    \addplot table[x=Vertices, y=Coordinated_BFS] {\ccB};
+    \addlegendentry{Coordinated BFS}
+    
+    \addplot table[x=Vertices, y=Reduced_DSU] {\ccB};
+    \addlegendentry{Reduced-DSU}
+    
+    \addplot table[x=Vertices, y=Existing] {\ccB};
+    \addlegendentry{Existing}
+    
+    \end{axis}
+    \end{tikzpicture}
+    \caption{Execution time of connected components for varying number of vertices.}
+    \Description{Execution time of connected components for varying number of vertices.}
+    \label{fig:exp5}
+\end{figure}
+
+Since the number of components is not very high, Coordinated Wait-Free BFS Labeling performs the best. This is because the time spent on barrier synchronization is minimal, and the algorithm is as efficient as the wait-free BFS. Reduced-DSU Component Merging is the second-best, with the existing algorithm following closely.
+
+\paragraph{Experiment 3: Varying Number of Threads}
+\label{cc:exp3}
+
+We fix the number of vertices at $5e4$ per component, number of components at $100$ and number of edges at $50$ times the number of vertices. Figure~\ref{fig:exp6} present the results.
+
+\pgfplotstableread[col sep=space]{
+    Threads   Coordinated_BFS  Reduced_DSU  Existing
+    2         5771680    14365772   20918563
+    4         3254026    10035562   11630302
+    8         1829292    7123372    6619472
+    16        991526     4880461    5024664
+    32        545344     2767063    3205408
+    64        490756     1814275    2728337
+}\ccC
+
+\begin{figure}
+    \centering
+    \begin{tikzpicture}
+    \begin{axis}[
+        width=0.45\textwidth,
+        height=0.3\textwidth,
+        xlabel={Threads},
+        ylabel={Execution Time ($\mu$s)},
+        legend pos=north east,
+        xtick=data,
+        xticklabels={2,4,8,16,32,64},
+        ymajorgrids=true,
+        grid style=dashed,
+        enlarge x limits=0.05,
+        tick label style={font=\small},
+        label style={font=\small},
+        legend style={font=\small},
+        legend style={
+            font=\scriptsize,
+            cells={anchor=west},
+            inner sep=2pt,
+            column sep=2pt
+        }
+    ]
+    
+    \addplot table[x=Threads, y=Coordinated_BFS] {\ccC};
+    \addlegendentry{Coordinated BFS}
+    
+    \addplot table[x=Threads, y=Reduced_DSU] {\ccC};
+    \addlegendentry{Reduced-DSU}
+    
+    \addplot table[x=Threads, y=Existing] {\ccC};
+    \addlegendentry{Existing}
+    
+    \end{axis}
+    \end{tikzpicture}
+    \vspace{-1mm}
+    \caption{Execution time of connected components for varying number of threads.}
+    \Description{Execution time of connected components for varying number of threads.}
+    \label{fig:exp6}
+\end{figure}
+
+Similar to experiment 2, Coordinated Wait-Free BFS Labeling consistently outperforms the other algorithms across different thread counts, followed by Reduced-DSU Component Merging. The existing algorithm performs the worst.
+
+\paragraph{Experiment 4: Varying Graph Density}
+\label{cc:exp4}
+
+We fix the number of threads at 64 and number of vertices at $1e6$. We performed the experiments on low density graphs, since large densities would result in a single connected component. Figure~\ref{fig:exp7} present the results.
+
+\pgfplotstableread[col sep=space]{
+    Density   Serial   Coordinated_BFS  Reduced_DSU  Existing
+    0.0002    270152     136988494     71176     111844
+    0.0004    365726     57024239      70460     169343
+    0.001     391727     6325528       75408     206833
+    0.002     455994     281690        88115     253037
+    0.004     567360     42533         124377    309005
+    0.01      985679     60102         233327    383737
+}\ccD
+
+\begin{figure}
+    \centering
+    \begin{tikzpicture}
+    \begin{axis}[
+        width=0.45\textwidth,
+        height=0.3\textwidth,
+        xlabel={Density (Percent)},
+        ylabel={Execution Time ($\mu$s)},
+        legend pos=north east,
+        xtick=data,
+        xticklabels={0.0002,0.0004,0.001,0.002,0.004,0.01},
+        ymajorgrids=true,
+        grid style=dashed,
+        enlarge x limits=0.05,
+        tick label style={font=\small},
+        label style={font=\small},
+        legend style={font=\small},
+        legend style={
+            font=\scriptsize,
+            cells={anchor=west},
+            inner sep=2pt,
+            column sep=2pt
+        },
+        ymax=2000000,
+        xmode=log
+    ]
+    
+    \addplot table[x=Density, y=Serial] {\ccD};
+    \addlegendentry{Serial}
+    
+    \addplot table[x=Density, y=Coordinated_BFS] {\ccD};
+    \addlegendentry{Coordinated BFS}
+    
+    \addplot table[x=Density, y=Reduced_DSU] {\ccD};
+    \addlegendentry{Reduced-DSU}
+    
+    \addplot table[x=Density, y=Existing] {\ccD};
+    \addlegendentry{Existing}
+    
+    \end{axis}
+    \end{tikzpicture}
+    \caption{Execution time of connected components for varying graph densities.}
+    \Description{Execution time of connected components for varying graph densities.}
+    \label{fig:exp7}
+\end{figure}
+
+For extremely sparse graphs, Coordinated Wait-Free BFS Labeling performs the worst since the number of components is very high and time spent on barrier synchronization is significant. Reduced-DSU Component Merging is the best, followed by the existing algorithm.
+
+\paragraph{Summary} In conclusion, for small to medium numbers of components, Coordinated Wait-Free BFS Labeling is the most efficient. However, as the number of components increases, Reduced-DSU Component Merging becomes the best choice.

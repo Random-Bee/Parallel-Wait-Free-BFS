@@ -1,0 +1,130 @@
+\section{Parallel Connected Components}
+\label{cc_sec}
+
+Given an undirected graph $G = (V, E)$ with $n = |V|$ vertices and $m = |E|$ edges, our goal is to assign a unique component identifier to each connected component in the graph. We implemented three parallel algorithms to solve this problem.
+
+\subsection{Coordinated Wait-Free BFS Labeling}
+
+The first algorithm we implemented is very similar to the serial connected components algorithm. We maintain a global integer array $comps$ of size $n$, initialized to $-1$, where $comps[i]$ stores the component identifier of vertex $i$. A master thread iterates through the vertices to find one that is not assigned to any component and initiates a BFS from that vertex, assisted by all other threads. The BFS used here is the wait-free BFS described in Section \ref{bfs_sec}, with the only difference being that we assign the component identifier to each vertex as it is visited, instead of assigning distances.
+
+The helper threads wait at a barrier until the master thread identifies an unassigned vertex. We maintain a global integer $comp$, initialized to $0$ and incremented after each connected component is found. After assigning a component, we clean up the data structures used in the BFS and wait for all threads to finish before proceeding to the next component. The master thread continues this process until all vertices are assigned to a component. Once all vertices are assigned, we set $comp$ to $-1$ to signal that all components have been found and the threads can terminate. The pseudocode for the algorithm is shown in Algorithm \ref{cc_algo1} and Algorithm \ref{cc_algo1_helper}.
+
+\begin{algorithm}
+\caption{Main Connected Components (CC) Function}
+\label{cc_algo1}
+\begin{algorithmic}[1]
+    \Procedure{scc}{tid}
+        \For{$i = 0$ to $N-1$}
+            \If{$comps[i] = -1$}
+                \While{head $\neq$ nullptr}
+                    \State delete all nodes in head
+                \EndWhile
+                \State head $\gets$ new ListNode()
+                \State head.buckets.resize(num\_t)
+                \State head.done.resize(num\_t, 0)
+                \State head.buckets[0].push\_back($i$)
+                \State comps[$i$] $\gets$ comp
+                \State barrier\_wait(bar\_bfs)
+                \State wf\_bfs(tid)
+                \State barrier\_wait(bar\_clean)
+                \State cleanUp(tid)
+                \State barrier\_wait(bar\_next)
+                \State comp++
+            \EndIf
+        \EndFor
+        \While{head $\neq$ nullptr} 
+            \State delete all nodes in head
+        \EndWhile
+        \State head $\gets$ nullptr
+        \State barrier\_wait(bar\_bfs)
+        \State comp $\gets$ -1
+        \State barrier\_wait(bar\_clean)
+        \State barrier\_wait(bar\_next)
+    \EndProcedure
+\end{algorithmic}
+\end{algorithm}
+    
+\begin{algorithm}
+\caption{Helper Function for CC Computation}
+\label{cc_algo1_helper}
+\begin{algorithmic}[1]
+    \Procedure{scc\_helper}{tid}
+        \While{comp $\neq$ -1}
+            \State barrier\_wait(bar\_bfs)
+            \State wf\_bfs(tid)
+            \State barrier\_wait(bar\_clean)
+            \State cleanUp(tid)
+            \State barrier\_wait(bar\_next)
+        \EndWhile
+    \EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Proof of Correctness}
+
+At the start, all vertices are unassigned, i.e., $comps[i] = -1$. The first BFS starts from the first unassigned vertex, marking it and all its reachable vertices with $comp = 0$.
+
+When the master thread identifies the next unassigned vertex, it initiates a new BFS, ensuring that all reachable vertices receive a new component identifier. Since the BFS does not overwrite existing component values, each component is uniquely assigned. This process continues until all vertices are assigned to a component. The correctness of the BFS algorithm guarantees that all reachable vertices are assigned to the same component.
+
+The algorithm terminates when $comp = -1$, ensuring that no thread continues execution unnecessarily.
+
+\subsection{Reduced-DSU Component Merging}
+
+This algorithm uses a lock-free disjoint set data structure to merge components. The disjoint set initially contains $n$ elements, each representing a component ID. Each thread starts a BFS from a vertex that is not assigned to a component. When two threads with component IDs $c_1$ and $c_2$ meet at a vertex $v$, the thread with the lower component ID merges the two components. The disjoint set structure then records that $c_1$ and $c_2$ refer to the same component.
+
+After all threads have completed, vertices may still be assigned different component IDs, even if they belong to the same component. To resolve this, a final pass is performed over all vertices, replacing the component ID of each vertex with the representative component ID obtained from the disjoint set. The pseudocode for the algorithm is shown in Algorithm \ref{cc_algo2}.
+
+\begin{algorithm}
+\caption{Parallel Connected Components with DSU}
+\label{cc_algo2}
+\begin{algorithmic}[1]
+\Procedure{scc}{tid}
+    \State $start \gets tid \times (N / num_t)$
+    \State $end \gets (tid = num_t - 1) ? N : (tid + 1) \times (N / num_t)$
+    \For{$i = start$ to $end - 1$}
+        \State $curr \gets$ atomic\_fetch\_add($comp$, 1)
+        \State $expected \gets -1$
+        \If{CAS($comps[i]$, $expected$, $curr$)}
+            \State $q \gets$ empty queue
+            \State enqueue $q, i$
+            \While{$q$ is not empty}
+                \State $u \gets$ dequeue $q$
+                \For{each $v$ in $adj[u]$}
+                    \State $expected \gets -1$
+                    \State $fl \gets$ CAS($comps[v]$, $expected$, $curr$)
+                    \If{\textbf{not} $fl$}
+                        \State $cv \gets comps[v].$load()
+                        \If{$curr > cv$}
+                            \State dsu.unite($curr$, $comps[v]$)
+                        \EndIf
+                        \State $curr \gets \min(curr, comps[v].$load())
+                    \Else
+                        \State enqueue $q, v$
+                    \EndIf
+                \EndFor
+            \EndWhile
+        \EndIf
+    \EndFor
+
+    \State barrier\_wait($bar$)
+
+    \For{$i = start$ to $end - 1$}
+        \State $comps[i] \gets$ dsu.find($comps[i]$)
+    \EndFor
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Proof of Correctness}
+
+Since each thread starts a BFS from a vertex that is not assigned to a component, every vertex is assigned to a component. Threads working on different components never meet at a vertex, ensuring that component IDs for different components are not merged in the disjoint set.
+
+When two threads meet at a vertex, the thread with the lower component ID merges the two components. If multiple threads are processing the same component, the thread with the lower thread ID is guaranteed to encounter the other thread at some vertex. This is because if the other thread has initiated a BFS from a vertex in the same component, it implies that its initial CAS operation was successful. Since there is at least one vertex with a higher component ID in this component, the CAS operation by the thread with the lower component ID will eventually fail, prompting the thread to call \texttt{unite} on the two component IDs. This guarantees that the component IDs are merged correctly.
+
+At the end, the component ID of each vertex is replaced with the representative component ID from the disjoint set, ensuring that all vertices in the same component receive the same component ID.
+
+These steps ensure that the algorithm correctly assigns component IDs to all vertices.
+
+\begin{remark*}
+    We also considered a variant of Algorithm \ref{cc_algo2}, where upon collision between two threads inside a component, the thread with the smaller component ID continued expanding without using a disjoint set union structure. However, this approach resulted in significantly worse performance. Therefore, it is omitted from the main discussion and its description is provided in the appendix \ref{sec:atomic_cc} for completeness.
+\end{remark*}

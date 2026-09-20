@@ -1,0 +1,17 @@
+\section{Introduction}
+
+Graph algorithms play a crucial role in numerous applications, including network analysis, social media analysis, computational biology, and distributed systems. Breadth-first search (BFS) is a fundamental graph traversal algorithm that explores vertices level by level, making it a key component in solving problems such as shortest path computation, connected components, and network flow analysis. Despite its simplicity, parallelizing BFS efficiently presents significant challenges due to the need for synchronized vertex updates and balanced workload distribution \cite{challenges1}, \cite{challenges2}.
+
+In this paper, we present a novel \textbf{parallel wait-free BFS algorithm} that achieves high performance by using a dynamic bucket-based work distribution strategy. We use a global linked list where each node represents a depth level and each node contains a set of buckets used to distribute vertices among multiple threads. The algorithm guarantees that all vertices at the current depth are processed before progressing to the next depth level, while allowing threads to process vertices in parallel without any synchronization overhead. Furthermore, our approach ensures wait-free guarantees by using a helping mechanism and atomic operations to manage dynamic array expansions and bucket assignments.
+
+To support this parallel BFS, we introduce a custom dynamic array (CDA) that supports multi-reader single-writer (MRSW) semantics. The CDA allows threads to efficiently append elements, while ensuring safe concurrent reads. Our experimental results demonstrate that the proposed wait-free BFS significantly outperforms existing approaches across various graph sizes and densities.
+
+In addition to BFS, we extend our approach to solve the \textbf{connected components (CC)} problem in parallel. We implemented two different parallel algorithms for connected components: 
+\begin{enumerate}
+    \item A parallel BFS-based approach that assigns component identifiers using wait-free BFS.
+    \item A parallel disjoint-set based approach that merges components using a lock-free union-find structure.
+\end{enumerate}
+
+Our experimental evaluation covers a wide range of graph sizes, densities, and thread configurations, including both synthetic and real-world datasets. We compare our approach with existing parallel algorithms to highlight its superior performance and scalability. Our results show that the proposed wait-free BFS and its extensions to connected components achieve significant speedup and scalability on modern multi-core architectures.
+
+The remainder of this paper is organized as follows. Section \ref{related_work_sec} provides an overview of the related work on parallel graph algorithms. Section \ref{bfs_sec} discusses the parallel wait-free BFS algorithm, including its data structures, work distribution, and correctness. Section \ref{cc_sec} describes the connected components algorithms. Section \ref{exp_sec} presents the experimental setup and performance evaluation. Finally, Section \ref{conclusion_sec} concludes the paper with a summary of our findings and potential future directions.

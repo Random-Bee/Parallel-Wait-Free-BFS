@@ -1,0 +1,72 @@
+\documentclass[sigconf,anonymous,review]{acmart}
+
+\settopmatter{printacmref=false}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+
+\usepackage{xspace}
+\usepackage{graphicx}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{hyperref}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{pgfplotstable}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning}
+
+\usepackage{amsmath}
+
+\newtheorem*{remark*}{Remark}
+
+\AtBeginDocument{%
+\providecommand\BibTeX{{%
+Bib\TeX}}}
+
+\setcopyright{acmlicensed}
+\copyrightyear{2025}
+\acmYear{2025}
+\acmDOI{XXXXXXX.XXXXXXX}
+
+\acmConference[ICPP]{International Conference on Parallel Processing}{September 8--11, 2025}{at The Catamaran Resort Hotel San Diego, CA}
+\acmISBN{978-1-4503-XXXX-X/2025/06}
+
+\title{Parallel Wait-Free BFS and Parallel Connected Components}
+
+\input{sections/abstract.tex}
+
+\begin{CCSXML}
+<ccs2012>
+   <concept>
+       <concept_id>10010147.10010169.10010170.10010171</concept_id>
+       <concept_desc>Computing methodologies~Shared memory algorithms</concept_desc>
+       <concept_significance>500</concept_significance>
+   </concept>
+</ccs2012>
+\end{CCSXML}
+
+\ccsdesc[500]{Computing methodologies~Shared memory algorithms}
+
+\keywords{Breadth-first search (BFS), Connected components detection, Wait-free algorithms, Parallel graph algorithms}
+
+
+
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+
+\begin{document}
+
+\maketitle
+
+\input{sections/introduction.tex}
+\input{sections/related_work.tex}
+\input{sections/bfs.tex}
+\input{sections/cc.tex}
+\input{sections/experiments.tex}
+\input{sections/conclusion.tex}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{references}
+
+\input{sections/appendix.tex}
+
+\end{document}
