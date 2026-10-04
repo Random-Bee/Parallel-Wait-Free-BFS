@@ -9,19 +9,8 @@ size_t M;
 // vertex u's neighbors are adj[offsets[u]] up to, not including, adj[offsets[u+1]]
 graph_helpers::array<size_t> offsets;
 graph_helpers::array<int> adj;
-// vis marks vertices expanded top-down
+// vis marks vertices already expanded
 vector<int> dist, vis;
-// a one-byte code per vertex for the bottom-up frontier test, a quarter the size
-// of dist. Each level that a bottom-up level reads or writes gets its own code
-// from the level plan, handed out in increasing order and never reused within a
-// search, so a code names one level at any depth and a stale thread's test stays
-// exact. 0 is no code; once max_code is used up, levels test dist. Bottom-up
-// discoveries write their code before dist, so a thread that sees a vertex
-// marked also sees its code; top-down pushes write none, since many threads
-// pushing nearby vertices fight over the lines, and the first bottom-up level
-// after them writes its frontier's codes before testing
-constexpr int max_code = 255;
-vector<uint8_t> dist8;
 
 int num_t;
 
@@ -108,10 +97,6 @@ class customList {
     int* list = nullptr;
     int size = 0;
     int capacity = 0;
-    // summed degrees of the vertices pushed: the direction rule compares the
-    // top-down sums with the edges still unexplored, and a bottom-up level
-    // sizes its buckets by them
-    long long degree_sum = 0;
     // the arena of the bucket's owner, the one thread that pushes to it
     arena* memory;
 
@@ -144,48 +129,24 @@ class customList {
     }
 };
 
-enum level_direction { top_down, bottom_up };
-
-// what the direction rule carries from one level to the next
-struct level_plan {
-    level_direction direction;
-    long long edges_to_check;
-    long long frontier_size;
-    // vertices in no frontier yet; a vertex pushed twice is counted twice, so
-    // this can run below the true count
-    long long undiscovered;
-    // the code of this level's frontier in dist8, or 0, and the highest code
-    // handed out so far
-    int code;
-    int last_code;
-};
-
 // one thread's entries in a level. The first line holds what threads read as
-// they walk the level: its bucket's array and size, and the flags, each set
-// once. Only the owner changes the bucket, nearly always while the level before
-// is expanded, but an owner stalled in that level can still push to it, and
-// grow it, after other threads have started or finished this one. Such late
-// entries are vertices the threads that finished the level before pushed too,
-// so readers that miss them miss nothing. The owner rewrites its progress after
-// every entry it finishes, so that and its proposal go on the second line,
-// where those writes don't take the first from the readers.
-// Each entry fills its own pair of lines, which the L2 prefetcher fetches
-// together, so no two threads' entries share one
+// they walk the level: its bucket's array and size, and the flag, set once.
+// Only the owner changes the bucket, nearly always while the level before is
+// expanded, but an owner stalled in that level can still push to it, and grow
+// it, after other threads have started or finished this one. Such late entries
+// are vertices the threads that finished the level before pushed too, so
+// readers that miss them miss nothing. The owner rewrites its progress after
+// every entry it finishes, so that goes on the second line, where those writes
+// don't take the first from the readers. Each entry fills its own pair of
+// lines, which the L2 prefetcher fetches together, so no two threads' entries
+// share one
 struct alignas(128) owner_entry {
     // only the owner pushes to it
     customList bucket;
-    // set by the thread that finishes the bucket top-down, or the owner's
-    // blocks bottom-up
+    // set by the thread that finishes the bucket
     uint8_t done = 0;
-    // set by the thread that writes the last of the bucket's frontier codes
-    uint8_t codes_done = 0;
     // how far the owner has got: the last entry of its bucket it finished
-    // top-down, the last of its blocks bottom-up
     alignas(64) int last_done = -1;
-    // how far the owner has written its bucket's frontier codes
-    int codes_last_done = -1;
-    // written before it is read, so it starts unset
-    level_plan proposal;
 
     explicit owner_entry(arena* memory) : bucket(memory) {}
 };
@@ -196,11 +157,8 @@ class outer_list_node {
     public:
     int depth;
     owner_entry* owners;
-    // the first thread to claim plan_owner decides, with its proposal
-    atomic<int> plan_owner;
     atomic<outer_list_node*> next;
     outer_list_node() {
-        plan_owner = -1;
         next = nullptr;
     }
 };
@@ -312,32 +270,13 @@ void control_perf(const char* command) {
 constexpr int helper_block = 16;
 
 // push before marking: if this thread stops in between, v stays unmarked and
-// another thread can still discover and push it. The code goes before the mark
-// too, so a thread that finds v marked also finds its code; past the last code
-// it writes 0, which an undiscovered v already has
+// another thread can still discover and push it. Every thread that marks v
+// writes the same distance, so a plain store does
 [[gnu::always_inline]] inline void discover_vertex(
-        int v, customList& output_bucket, int next_distance, uint8_t next_code) {
-    output_bucket.push_back(v);
-    compiler_barrier();
-    dist8[v] = next_code;
-    compiler_barrier();
-    dist[v] = next_distance;
-}
-
-[[gnu::always_inline]] inline long long degree(int v) {
-    return offsets[v+1] - offsets[v];
-}
-
-// pushed before marking, as in discover_vertex. Of the threads that push v,
-// only the one whose swap marks it counts its edges: the direction rule
-// subtracts them from those still unexplored, and counting copies runs that
-// total down long before the search ends
-[[gnu::always_inline]] inline void discover_and_count(
         int v, customList& output_bucket, int next_distance) {
     output_bucket.push_back(v);
-    if(__sync_bool_compare_and_swap(&dist[v], -1, next_distance)) {
-        output_bucket.degree_sum += degree(v);
-    }
+    compiler_barrier();
+    dist[v] = next_distance;
 }
 
 void process_neighbors(
@@ -347,7 +286,7 @@ void process_neighbors(
     for(size_t j=0; j<count; j++) {
         int v = neighbors[j];
         if(dist[v] == -1) {
-            discover_and_count(v, output_bucket, next_distance);
+            discover_vertex(v, output_bucket, next_distance);
         }
     }
 }
@@ -358,9 +297,9 @@ constexpr size_t ordered_list_max = 3 * helper_block;
 
 // a helper walks a long list as it walks a bucket: in blocks of helper_block
 // entries, the blocks in a random order of its own. An owner and helpers that
-// expand the same hub then swap different entries of dist at any moment;
-// walking the list in the same order, they would all swap the same ones, each
-// swap waiting for the line
+// expand the same hub then write different entries of dist at any moment;
+// walking the list in the same order, they would all write the same ones, each
+// write waiting for the line
 void process_neighbors_shuffled(
         int u, customList& output_bucket, int next_distance, mt19937& rng) {
     const int* neighbors = adj.data() + offsets[u];
@@ -377,7 +316,7 @@ void process_neighbors_shuffled(
         for(size_t j=block*helper_block; j<end; j++) {
             int v = neighbors[j];
             if(dist[v] == -1) {
-                discover_and_count(v, output_bucket, next_distance);
+                discover_vertex(v, output_bucket, next_distance);
             }
         }
         block = next_affine_index(block, order.step, blocks);
@@ -436,152 +375,6 @@ void process_other_bucket(
             vis[u] = 1;
         }
         block = next_affine_index(block, order.step, blocks);
-    }
-}
-
-struct vertexRange {
-    int begin;
-    int end;
-};
-
-// bottom-up levels hand out vertices in small blocks: block b belongs to thread
-// b % num_t, so every thread's blocks sample the whole id range, and a level
-// whose work sits in one part of that range still spreads evenly. As with
-// top-down buckets, each owner publishes the last of its blocks it finished,
-// and helpers take the ones after that. Blocks much smaller than this are
-// slower, since each starts a new run through the neighbor lists that the
-// hardware prefetcher has to pick up again
-constexpr int bottom_up_block = 1024;
-int block_count;
-
-[[gnu::always_inline]] inline int owned_blocks(int t) {
-    return t < block_count ? (block_count - 1 - t) / num_t + 1 : 0;
-}
-
-// the vertices of thread t's k-th block
-[[gnu::always_inline]] inline vertexRange owned_block(int t, int k) {
-    int begin = (t + k*num_t) * bottom_up_block;
-    return {begin, min(begin + bottom_up_block, N)};
-}
-
-// the bottom-up level at which a helper last finished each block, so other
-// helpers and a late owner skip it; without it, every helper walks all of a
-// stalled owner's blocks. Laid out by owner, so an owner's entries share lines
-// only with its helpers. A stale thread can only write an older level, which
-// costs a repeated scan but never a skipped block
-vector<int> helped_at;
-int blocks_per_owner;
-
-[[gnu::always_inline]] inline int& helped_at_level(int t, int k) {
-    return helped_at[t * blocks_per_owner + k];
-}
-
-[[gnu::always_inline]] inline bool has_frontier_neighbor(
-        const int* neighbors, size_t count, int depth) {
-    for(size_t j=0; j<count; j++) {
-        if(dist[neighbors[j]] == depth) return true;
-    }
-    return false;
-}
-
-// has_frontier_neighbor on dist8, for a level with a code
-[[gnu::always_inline]] inline bool has_frontier_neighbor8(
-        const int* neighbors, size_t count, uint8_t code) {
-    for(size_t j=0; j<count; j++) {
-        if(dist8[neighbors[j]] == code) return true;
-    }
-    return false;
-}
-
-// the neighbor test is inlined, since most tests stop after a few neighbors
-// and the call around each was a large part of the cost
-void scan_block(
-        vertexRange range, int depth, int code, customList& output_bucket) {
-    // the block's undiscovered vertices, gathered without branching on each:
-    // every vertex is written, but the count moves only past undiscovered
-    // ones; on some levels about half are, and a branch on it mispredicts often
-    int candidates[bottom_up_block];
-    int n = 0;
-    for(int u=range.begin; u<range.end; u++) {
-        candidates[n] = u;
-        n += dist[u] == -1;
-    }
-    if(code > 0) {
-        // what this level finds is the next level's frontier, under the next
-        // code, which the plan reserved for it
-        uint8_t frontier_code = static_cast<uint8_t>(code);
-        uint8_t next_code = code < max_code ? static_cast<uint8_t>(code + 1) : 0;
-        for(int i=0; i<n; i++) {
-            int u = candidates[i];
-            // read once: the barriers in discover_vertex would make the
-            // compiler read the offsets again for the degree
-            size_t begin = offsets[u], end = offsets[u+1];
-            if(has_frontier_neighbor8(adj.data() + begin, end - begin, frontier_code)) {
-                discover_vertex(u, output_bucket, depth + 1, next_code);
-                output_bucket.degree_sum += end - begin;
-            }
-        }
-        return;
-    }
-    for(int i=0; i<n; i++) {
-        int u = candidates[i];
-        size_t begin = offsets[u], end = offsets[u+1];
-        if(has_frontier_neighbor(adj.data() + begin, end - begin, depth)) {
-            discover_vertex(u, output_bucket, depth + 1, 0);
-            output_bucket.degree_sum += end - begin;
-        }
-    }
-}
-
-// own blocks, in order, publishing each as the last one done and skipping those
-// a helper got to first; a helper that finishes the rest marks the owner done,
-// which stops it
-void fetch_own_blocks(
-        outer_list_node* curr, customList& output_bucket, int tid, int code) {
-    int depth = curr->depth;
-    int count = owned_blocks(tid);
-    int& last_done = curr->owners[tid].last_done;
-    for(int k=0; k<count && !curr->owners[tid].done; k++) {
-        if(helped_at_level(tid, k) != depth) {
-            scan_block(owned_block(tid, k), depth, code, output_bucket);
-        }
-        // helpers skip blocks up to here, so their vertices must be marked first
-        compiler_barrier();
-        last_done = k;
-    }
-    if(!curr->owners[tid].done) curr->owners[tid].done = 1;
-}
-
-// the blocks each other owner hasn't done yet, in a random order as top-down
-// helpers take bucket entries, so helpers on the same owner spread out; blocks
-// the owner or another helper has done since are skipped, and a helper that
-// gets through the rest marks the owner done
-void fetch_other_blocks(
-        outer_list_node* curr, customList& output_bucket, int tid,
-        mt19937& rng, int code) {
-    int depth = curr->depth;
-    for(int k=1; k<num_t; k++) {
-        int owner = (tid + k) % num_t;
-        if(curr->owners[owner].done) continue;
-        int start = curr->owners[owner].last_done + 1;
-        int remaining = owned_blocks(owner) - start;
-        affinePermutation order = affine_shuffle(max(remaining, 0), rng);
-        size_t index = order.index;
-        for(int i=0; i<remaining; i++) {
-            // read again for every block, since the owner and other helpers go on
-            compiler_barrier();
-            if(curr->owners[owner].done) break;
-            int block = start + static_cast<int>(index);
-            if(block > curr->owners[owner].last_done &&
-                    helped_at_level(owner, block) != depth) {
-                scan_block(owned_block(owner, block), depth, code, output_bucket);
-                // others skip the block once this is set, so its vertices must be marked first
-                compiler_barrier();
-                helped_at_level(owner, block) = depth;
-            }
-            index = next_affine_index(index, order.step, remaining);
-        }
-        if(!curr->owners[owner].done) curr->owners[owner].done = 1;
     }
 }
 
@@ -645,164 +438,24 @@ void top_down_level(
     }
 }
 
-// writes `code` for a frontier that top-down pushes left without one: this
-// thread's own bucket in order, publishing how far it got, then whatever is left
-// of each bucket no thread has finished. Every bucket is done when it returns,
-// so the frontier test can start; a code written twice or late is still right,
-// since every entry of the level's buckets is at the level
-void write_frontier_codes(outer_list_node* curr, int tid, int code) {
-    uint8_t frontier_code = static_cast<uint8_t>(code);
-    for(int k=0; k<num_t; k++) {
-        int owner = (tid + k) % num_t;
-        if(curr->owners[owner].codes_done) continue;
-        const customList& bucket = curr->owners[owner].bucket;
-        int sz = bucket.size;
-        // size must be read before the list pointer (see push_back)
-        compiler_barrier();
-        const int* list = bucket.list;
-        int& progress = curr->owners[owner].codes_last_done;
-        if(owner == tid) {
-            for(int i=0; i<sz; i++) {
-                dist8[list[i]] = frontier_code;
-                // helpers start past here, so the code must be written first
-                compiler_barrier();
-                progress = i;
-            }
-        }
-        else {
-            for(int i=progress+1; i<sz; i++) dist8[list[i]] = frontier_code;
-        }
-        // others skip the bucket once this is set, so its codes must be written first
-        compiler_barrier();
-        curr->owners[owner].codes_done = 1;
-    }
-}
-
-void bottom_up_level(
-        outer_list_node* curr, int tid, mt19937& rng, long long undiscovered,
-        level_direction previous, int code) {
-    if(curr->next == nullptr) {
-        add_node(curr, tid);
-    }
-    // after a top-down level the code is fresh, and nothing has written it yet
-    if(previous == top_down && code > 0) {
-        write_frontier_codes(curr, tid, code);
-    }
-    outer_list_node* next_node = curr->next.load();
-    customList& output_bucket = next_node->owners[tid].bucket;
-    // the level finds at most the undiscovered vertices, and at most one per
-    // edge leaving the frontier, which keeps long thin tails small; a thread
-    // finds them in its own blocks unless it helps, and those hold about a
-    // num_t-th of them. Sizing the bucket for that, with a quarter to spare,
-    // saves copying it at every doubling. Capacity never written costs no
-    // memory traffic
-    long long frontier_degrees = 0;
-    for(int t=0; t<num_t; t++) frontier_degrees += curr->owners[t].bucket.degree_sum;
-    long long share = min(undiscovered, frontier_degrees) / num_t;
-    output_bucket.reserve(static_cast<int>(share + share / 4));
-
-    fetch_own_blocks(curr, output_bucket, tid, code);
-    fetch_other_blocks(curr, output_bucket, tid, rng, code);
-}
-
-// the thresholds dir-bfs.cpp uses, so both switch at the same frontier sizes
-constexpr long long gapbs_alpha = 15;
-constexpr long long gapbs_beta = 18;
-
-[[gnu::always_inline]] inline level_plan propose_plan(
-        const level_plan& before, long long frontier_size, long long scout) {
-    long long undiscovered = before.undiscovered - frontier_size;
-    // an empty frontier ends the search, which only a top-down level detects
-    if(frontier_size == 0) {
-        return {top_down, before.edges_to_check, 0, undiscovered, 0, 0};
-    }
-    // stay bottom-up while the frontier grows or is still large
-    if(before.direction == bottom_up &&
-            (frontier_size >= before.frontier_size || frontier_size > N / gapbs_beta)) {
-        return {bottom_up, before.edges_to_check, frontier_size, undiscovered, 0, 0};
-    }
-    // go bottom-up once the frontier's edges are a large share of those unexplored
-    if(scout > before.edges_to_check / gapbs_alpha) {
-        return {bottom_up, before.edges_to_check, frontier_size, undiscovered, 0, 0};
-    }
-    return {top_down, before.edges_to_check - scout, frontier_size, undiscovered, 0, 0};
-}
-
-// a bottom-up level after a bottom-up one tests the code its discoveries wrote,
-// and any other bottom-up level takes the next unused code, which its first act
-// writes for the frontier; either way its own discoveries take the code after
-// it. Codes only grow within a search, so none is ever reused
-[[gnu::always_inline]] inline void assign_code(
-        const level_plan& before, level_plan& plan) {
-    plan.code = 0;
-    plan.last_code = before.last_code;
-    if(plan.direction != bottom_up) return;
-    int code = before.direction == bottom_up && before.code > 0
-        ? before.code + 1 : before.last_code + 1;
-    if(code <= max_code) {
-        plan.code = code;
-        plan.last_code = min(code + 1, max_code);
-    }
-}
-
-// every thread must expand a level the same way, since its progress entries
-// hold bucket positions top-down and block positions bottom-up; each thread
-// proposes a plan from what it sees, and the first to claim the level decides
-level_plan plan_level(
-        outer_list_node* curr, const level_plan& before, int tid) {
-    int owner = curr->plan_owner.load();
-    if(owner >= 0) return curr->owners[owner].proposal;
-
-    long long frontier_size = 0;
-    for(int t=0; t<num_t; t++) frontier_size += curr->owners[t].bucket.size;
-
-    // the edge count restarts at 1 after bottom-up levels, as GAPBS's does
-    long long scout = 1;
-    if(before.direction == top_down) {
-        scout = 0;
-        for(int t=0; t<num_t; t++) scout += curr->owners[t].bucket.degree_sum;
-    }
-
-    level_plan plan = propose_plan(before, frontier_size, scout);
-    assign_code(before, plan);
-    curr->owners[tid].proposal = plan;
-    if(!curr->plan_owner.compare_exchange_strong(owner, tid)) {
-        return curr->owners[owner].proposal;
-    }
-    return curr->owners[tid].proposal;
-}
-
+// a level that finds nothing links no successor, which ends the search
 void wf_bfs(outer_list_node* head, int tid, mt19937& rng) {
-    // before the first level every edge is unexplored
-    level_plan plan = {top_down, static_cast<long long>(offsets[N]), 1, N, 0, 0};
-    outer_list_node* curr = head;
-
-    while(curr != nullptr) {
-        level_direction previous = plan.direction;
-        plan = plan_level(curr, plan, tid);
-        if(plan.direction == bottom_up) {
-            bottom_up_level(curr, tid, rng, plan.undiscovered, previous, plan.code);
-        }
-        else {
-            top_down_level(curr, tid, rng);
-        }
-        curr = curr->next;
+    for(outer_list_node* curr = head; curr != nullptr; curr = curr->next) {
+        top_down_level(curr, tid, rng);
     }
 }
 
-void init(int N, size_t M) {
+void init(int N) {
     dist.resize(N, -1);
-    dist8.resize(N, 0);
     vis.resize(N, 0);
-    block_count = (N + bottom_up_block - 1) / bottom_up_block;
 }
 
-// fills each vertex's neighbors in file order, so the lists match wf-bfs.cpp's
+// fills each vertex's neighbors in file order, so the lists match wf-dir.cpp's
 void load_graph(const string& path) {
     graph_helpers::edge_list edges = graph_helpers::read_graph(path);
     N = edges.n;
     M = edges.from.size();
-    init(N, M);
+    init(N);
     graph_helpers::build_csr(edges, offsets, adj);
 }
 
@@ -811,7 +464,6 @@ void load_graph(const string& path) {
 outer_list_node* make_first_level() {
     outer_list_node* head = new_level(0, arenas[0]);
     head->owners[0].bucket.push_back(0);
-    head->owners[0].bucket.degree_sum = degree(0);
     return head;
 }
 
@@ -821,20 +473,16 @@ void free_levels() {
     for(int t=0; t<num_t; t++) arenas[t].reset();
 }
 
-// thread tid's share of what a search starts from: a slice of dist, dist8 and
-// vis, with the source at 0, its own row of helped_at, whose entries left from
-// the last search would match this one's levels, and no spare level, since the
-// arenas took the last one back
+// thread tid's share of what a search starts from: a slice of dist and vis,
+// with the source at 0, and no spare level, since the arenas took the last one
+// back
 void reset_share(int tid) {
     spare_level = nullptr;
     int begin = static_cast<int>(1LL * N * tid / num_t);
     int end = static_cast<int>(1LL * N * (tid + 1) / num_t);
     fill(dist.begin() + begin, dist.begin() + end, -1);
-    fill(dist8.begin() + begin, dist8.begin() + end, 0);
     fill(vis.begin() + begin, vis.begin() + end, 0);
     if(begin == 0 && end > 0) dist[0] = 0;
-    fill(helped_at.begin() + tid * blocks_per_owner,
-         helped_at.begin() + (tid + 1) * blocks_per_owner, -1);
 }
 
 // the threads live for the whole run, as GAPBS's OpenMP threads do, so no
@@ -880,7 +528,7 @@ void search_thread(int tid, int cpu) {
 }
 
 void write_output() {
-    graph_helpers::write_distances("wfd-out.txt", dist);
+    graph_helpers::write_distances("wf-csr-out.txt", dist);
 }
 
 // the timed searches on num_t threads pinned to cpu_ids, returning their
@@ -888,10 +536,6 @@ void write_output() {
 // counts the threads meet at, start afresh, so one thread count can follow
 // another
 long long run_searches(const vector<int>& cpu_ids) {
-    // sized once the thread count is known to be valid, since owners divide by it
-    blocks_per_owner = owned_blocks(0);
-    helped_at.assign(static_cast<size_t>(num_t) * blocks_per_owner, -1);
-
     arenas = vector<arena>(num_t);
     searches.return_times.assign(num_t, {});
     searches.number = 0;

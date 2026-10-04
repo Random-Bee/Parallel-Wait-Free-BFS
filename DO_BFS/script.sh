@@ -1,4 +1,19 @@
 #!/bin/bash
+set -euo pipefail
+
+# every program here is built with GCC 15, the newest compiler installed, so
+# ours, GAPBS, PASGAL and GBBS share one compiler; the system's GCC 8 cannot
+# build PASGAL or GBBS. They are built as C++23, the newest published standard
+# (GCC 15 calls its C++26 support highly experimental). Loops start on 32-byte
+# boundaries: a hot loop of up to 32 bytes then never spans two cache lines,
+# so an edit that moves it does not change the times by a few percent. Jump
+# targets do too, since GCC aligns some loop tops as jump targets rather than
+# loops: left on 8 bytes, scan_block's frontier test crossed a line in
+# wf-dir.cpp and cost it 9% on uk-2002. 64-byte boundaries slowed
+# wf-dir-mo.cpp by a third on road
+cxx=/opt/rh/gcc-toolset-15/root/usr/bin/g++
+"$cxx" -std=c++23 -O2 -g -fno-omit-frame-pointer -falign-loops=32 -falign-jumps=32 -fopenmp dir-bfs.cpp -o dir.out
+echo "Direction-Optimizing BFS compiled"
 
 # Experiment 1
 
@@ -113,10 +128,10 @@
 for i in 2 4 8 16 32 64
 do
   echo $i
-  echo Wait-Free
+  echo Direction-Optimizing
   for j in {1..5}
   do
-    echo $i | ./wf datasets/liveJournal1.txt
+    ./dir.out ../datasets/liveJournal1.edges $i
     sleep 2
   done
   echo

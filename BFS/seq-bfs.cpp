@@ -25,25 +25,22 @@ void bfs() {
 int main(int argc, char *argv[]) {
     ios_base::sync_with_stdio(false); cin.tie(0); cout.tie(0);
     int i, j;
-    
+
     FILE* f_in = fopen(argv[1], "r");
 
     fscanf(f_in, "%d %d", &N, &M);
 
     adj.resize(N);
     dist.resize(N, -1);
-    
+
     for(i=0; i<M; i++) {
         int x, y;
         fscanf(f_in, "%d %d", &x, &y);
-        // x--; y--; ///////////////////////////////////////////// for sina weibo
-        // x-=101; y-=101; ///////////////////////////////////////////// for friendster
-        assert(x>=0 && y>=0);
-        if(x>=N || y>=N) continue;
+        x--; y--;
         adj[x].push_back(y);
         adj[y].push_back(x);
     }
-    
+
     fclose(f_in);
 
     high_resolution_clock::time_point t1 = high_resolution_clock::now();
@@ -64,6 +61,6 @@ int main(int argc, char *argv[]) {
     fclose(f_out);
 
     cout << duration << "\n";
-    
+
     return 0;
 }
