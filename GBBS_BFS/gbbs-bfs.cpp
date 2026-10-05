@@ -59,6 +59,7 @@
 
 #include "../CPU_helpers/cpu_affinity.hpp"
 #include "../Graph_helpers/graph_reader.hpp"
+#include "../Benchmark/stall.hpp"
 
 
 // The parts of GBBS's library (gbbs/bridge.h, macros.h, flags.h,
@@ -463,8 +464,13 @@ struct uncompressed_neighbors {
 
   // ======== Internal primitives used by EdgeMap implementations =======
 
+  // a worker stalls when it starts its first vertex or block of edges in a
+  // round, here and in decode_block, the two that BFS's edgeMap uses, at a cost
+  // per vertex or block rather than per edge; BFS_F is the only F, and its
+  // level numbers the rounds
   template <class VS, class F, class G>
   void decodeBreakEarly(VS& vs, F& f, const G& g, bool parallel = 0) {
+    STALL_POINT(parlay::worker_id(), parlay::num_workers(), f.level);
     if (!parallel || degree < 1000) {
       for (size_t j = 0; j < degree; j++) {
         auto nw = neighbors[j];
@@ -537,6 +543,7 @@ struct uncompressed_neighbors {
   // Used in edge_map_blocked.h
   template <class F, class G>
   size_t decode_block(uintT offset, uintE block_num, F& f, const G& g) {
+    STALL_POINT(parlay::worker_id(), parlay::num_workers(), f.level);
     size_t k = 0;
     uintE start = vertex_ops::kBlockSize * block_num;
     uintE end = std::min(start + vertex_ops::kBlockSize, degree);
