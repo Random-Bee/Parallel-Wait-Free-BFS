@@ -1,6 +1,7 @@
 #include <bits/stdc++.h>
 #include "../CPU_helpers/cpu_affinity.hpp"
 #include "../Graph_helpers/graph_reader.hpp"
+#include "../Benchmark/stall.hpp"
 using namespace std;
 using namespace chrono;
 
@@ -604,6 +605,37 @@ void scan_block(
     }
 }
 
+#ifdef SAME_SOCKET_FIRST
+// each thread's row of num_t owners, in the order it visits them in a level:
+// itself, then the others on its NUMA node, then the rest, each group in
+// round-robin order from it, so its helping reaches the other node only once
+// its own node's owners are done. Built with -DSAME_SOCKET_FIRST for runs over
+// several sockets; on one socket this is the plain round-robin order, which
+// the default build computes rather than reads, and is faster for it
+vector<int> help_order;
+
+void build_help_order(const vector<int>& cpu_ids) {
+    map<int, int> node_of_cpu = cpu_helpers::detail::read_numa_nodes();
+    vector<int> node(num_t);
+    for(int t=0; t<num_t; t++) {
+        auto found = node_of_cpu.find(cpu_ids[t]);
+        node[t] = found == node_of_cpu.end() ? 0 : found->second;
+    }
+    help_order.assign(static_cast<size_t>(num_t) * num_t, 0);
+    for(int t=0; t<num_t; t++) {
+        int* row = help_order.data() + static_cast<size_t>(t) * num_t;
+        int n = 0;
+        row[n++] = t;
+        for(int k=1; k<num_t; k++) {
+            if(node[(t + k) % num_t] == node[t]) row[n++] = (t + k) % num_t;
+        }
+        for(int k=1; k<num_t; k++) {
+            if(node[(t + k) % num_t] != node[t]) row[n++] = (t + k) % num_t;
+        }
+    }
+}
+#endif
+
 // own blocks, in order, publishing each as the last one done and skipping those
 // a helper got to first; a helper that finishes the rest marks the owner done,
 // which stops it
@@ -629,8 +661,15 @@ void fetch_own_blocks(
 void fetch_other_blocks(
         outer_list_node* curr, outer_list_node* next_node, int level,
         customList& output_bucket, int tid, mt19937& rng, int code) {
+#ifdef SAME_SOCKET_FIRST
+    const int* order = help_order.data() + static_cast<size_t>(tid) * num_t;
+#endif
     for(int k=1; k<num_t; k++) {
+#ifdef SAME_SOCKET_FIRST
+        int owner = order[k];
+#else
         int owner = (tid + k) % num_t;
+#endif
         if(curr->done[owner] >= level) continue;
         int start = last_done_on(curr, next_node, owner, level) + 1;
         int remaining = owned_blocks(owner) - start;
@@ -657,17 +696,22 @@ void fetch_other_blocks(
 void top_down_level(
         outer_list_node* curr, outer_list_node* next_node, int level,
         int tid, mt19937& rng) {
-    int work_on = tid;
+#ifdef SAME_SOCKET_FIRST
+    const int* order = help_order.data() + static_cast<size_t>(tid) * num_t;
+#endif
 
-    for(int _=0; _<num_t; _++) {
+    for(int k=0; k<num_t; k++) {
+#ifdef SAME_SOCKET_FIRST
+        int work_on = order[k];
+#else
+        int work_on = tid + k < num_t ? tid + k : tid + k - num_t;
+#endif
         customList& bucket = curr->buckets[work_on];
         // done already, or the bucket holds another level
         bool skip = curr->done[work_on] >= level || bucket.level != level;
         // the level before the size (see begin_level)
         compiler_barrier();
         if(skip || bucket.size == 0) {
-            work_on++;
-            if(work_on>=num_t) work_on -= num_t;
             continue;
         }
 
@@ -684,8 +728,6 @@ void top_down_level(
         }
 
         curr->mark_done(work_on, level);
-        work_on++;
-        if(work_on>=num_t) work_on -= num_t;
     }
 }
 
@@ -699,8 +741,15 @@ void top_down_level(
 void write_frontier_codes(
         outer_list_node* curr, outer_list_node* next_node, int level, int tid,
         uint8_t code) {
+#ifdef SAME_SOCKET_FIRST
+    const int* order = help_order.data() + static_cast<size_t>(tid) * num_t;
+#endif
     for(int k=0; k<num_t; k++) {
+#ifdef SAME_SOCKET_FIRST
+        int owner = order[k];
+#else
         int owner = (tid + k) % num_t;
+#endif
         if(curr->codes_done[owner] >= level) continue;
         const customList& bucket = curr->buckets[owner];
         bool this_level = bucket.level == level;
@@ -831,6 +880,7 @@ void wf_bfs(outer_list_node* nodes, int tid, mt19937& rng) {
     int level = 0;
 
     while(true) {
+        STALL_POINT(tid, num_t, level);
         outer_list_node* curr = &nodes[level & 1];
         bool codes_first = false;
         if(!plan_level(curr, level, plan, codes_first)) {
@@ -962,6 +1012,9 @@ void write_output() {
 // counts the threads meet at, start afresh, so one thread count can follow
 // another
 long long run_searches(const vector<int>& cpu_ids) {
+#ifdef SAME_SOCKET_FIRST
+    build_help_order(cpu_ids);
+#endif
     // sized once the thread count is known to be valid, since owners divide by it
     blocks_per_owner = owned_blocks(0);
     helped_at.assign(static_cast<size_t>(num_t) * blocks_per_owner, -1);
@@ -979,6 +1032,10 @@ long long run_searches(const vector<int>& cpu_ids) {
 
     constexpr int repetitions = 20;
     long long total_duration = 0;
+#ifdef STALLS
+    // until the last thread returned, which stalled threads put off
+    long long total_last_return = 0;
+#endif
 
     for(int i=1; i<=repetitions; i++) {
         // counted one search at a time, since in between the threads only spin
@@ -999,12 +1056,19 @@ long long run_searches(const vector<int>& cpu_ids) {
             searches.return_times.begin(), searches.return_times.end());
 
         total_duration += duration_cast<microseconds>(t2 - t1).count();
+#ifdef STALLS
+        total_last_return += duration_cast<microseconds>(*max_element(
+            searches.return_times.begin(), searches.return_times.end()) - t1).count();
+#endif
         free_buckets();
     }
 
     searches.number = -1;
     for(thread& t: threads) t.join();
     delete[] nodes;
+#ifdef STALLS
+    cerr << "last return " << total_last_return / repetitions << " us\n";
+#endif
 
     return total_duration / repetitions;
 }

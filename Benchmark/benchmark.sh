@@ -18,13 +18,27 @@ set -euo pipefail
 # of its five builds. A round runs every program once, so drift over the
 # benchmark reaches them all alike. A point is correct when its distances
 # match those of its run's first thread count, and the run's last distances
-# match a sequential BFS's.
+# match a sequential BFS's. Over both nodes, wf-dir.cpp and wf-dir-mem.cpp run
+# as built with -DSAME_SOCKET_FIRST, whose helpers visit the owners on their own
+# node first; on one node they run as built without it, whose helpers visit the
+# same owners round-robin.
+#
+# More programs run only when PROGRAMS names them: wdnow, wf-dir.cpp again
+# under a name of its own, so it can be measured anew next to a variant without
+# its earlier rows counting as done, and nocode, WF_BFS/tmp/wf-dir-nocode.cpp,
+# whose bottom-up levels test dist rather than one-byte frontier codes. In the
+# same way, wdsock and memsock are wf-dir.cpp and wf-dir-mem.cpp built with
+# -DSAME_SOCKET_FIRST on either placement, and wdrr and memrr their copies
+# from before that build existed, WF_BFS/tmp/wf-dir-rr.cpp and
+# wf-dir-mem-rr.cpp, whose helpers visit all owners round-robin.
 #
 # Usage: ./benchmark.sh [placements] [graphs], e.g. ./benchmark.sh node0 "lj uk";
 # both placements and all five graphs by default; PROGRAMS="wfbfs" limits it to
-# some programs. DRY_RUN=1 lists the runs left without building or running
-# anything. Rows go to results/benchmark.csv
-# and per-point medians to results/benchmark-summary.csv. A stopped benchmark
+# some programs, and SHIFTS="0 128 256" to some of the builds. DRY_RUN=1 lists
+# the runs left without building or running anything. Rows go to
+# results/benchmark.csv
+# and per-point medians to results/benchmark-summary.csv, or with RESULTS=name
+# to results/name.csv and results/name-summary.csv. A stopped benchmark
 # picks up where it left off, as a run with every point correct is not run
 # again; delete results/benchmark.csv to start over, which is needed after
 # any program changes. It runs for hours, so start it detached:
@@ -42,9 +56,9 @@ refs="$root/WF_BFS/tmp"
 lock="$root/WF_BFS/tmp/bench.lock"
 build="$here/build"
 results="$here/results"
-out="$results/benchmark.csv"
-summary="$results/benchmark-summary.csv"
-shifts=(0 64 128 192 256)
+out="$results/${RESULTS:-benchmark}.csv"
+summary="$results/${RESULTS:-benchmark}-summary.csv"
+read -r -a shifts <<< "${SHIFTS:-0 64 128 192 256}"
 read -r -a programs <<< "${PROGRAMS:-wd mem wfbfs gapbs pasgal gbbs seq}"
 
 # the thread counts a run goes through: the placement's, or 1 for the
@@ -86,7 +100,7 @@ for placement in $placements; do
 done
 for name in "${programs[@]}"; do
     case $name in
-        wd|mem|wfbfs|gapbs|pasgal|gbbs|seq) ;;
+        wd|mem|wfbfs|gapbs|pasgal|gbbs|seq|wdnow|nocode|wdsock|memsock|wdrr|memrr) ;;
         *) echo "unknown program $name" >&2; exit 1 ;;
     esac
 done
@@ -150,10 +164,24 @@ build_program() {
     case $name in
         wfbfs) "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -pthread "$root/WF_BFS/wf-bfs-csr.cpp" \
                 -o "$binary" ;;
-        wd) "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -pthread "$root/WF_DO_BFS/wf-dir.cpp" \
-                -o "$binary" ;;
-        mem) "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -pthread "$root/WF_DO_BFS/wf-dir-mem.cpp" \
-                -o "$binary" ;;
+        wd|wdnow) "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -pthread \
+                "$root/WF_DO_BFS/wf-dir.cpp" -o "$binary"
+            "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -DSAME_SOCKET_FIRST -pthread \
+                "$root/WF_DO_BFS/wf-dir.cpp" -o "$build/$name-sock-$shift.out" ;;
+        wdsock) "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -DSAME_SOCKET_FIRST -pthread \
+                "$root/WF_DO_BFS/wf-dir.cpp" -o "$binary" ;;
+        nocode) "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -pthread -I "$root/WF_DO_BFS" \
+                "$root/WF_BFS/tmp/wf-dir-nocode.cpp" -o "$binary" ;;
+        wdrr) "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -pthread -I "$root/WF_DO_BFS" \
+                "$root/WF_BFS/tmp/wf-dir-rr.cpp" -o "$binary" ;;
+        mem) "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -pthread \
+                "$root/WF_DO_BFS/wf-dir-mem.cpp" -o "$binary"
+            "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -DSAME_SOCKET_FIRST -pthread \
+                "$root/WF_DO_BFS/wf-dir-mem.cpp" -o "$build/$name-sock-$shift.out" ;;
+        memsock) "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -DSAME_SOCKET_FIRST -pthread \
+                "$root/WF_DO_BFS/wf-dir-mem.cpp" -o "$binary" ;;
+        memrr) "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -pthread -I "$root/WF_DO_BFS" \
+                "$root/WF_BFS/tmp/wf-dir-mem-rr.cpp" -o "$binary" ;;
         gapbs) "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -fopenmp "$root/DO_BFS/dir-bfs.cpp" \
                 -o "$binary" ;;
         pasgal) "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift "${parlay[@]}" \
@@ -213,10 +241,13 @@ for run in "${pending[@]}"; do
     if [ "$name" != seq ]; then
         args+=("${counts// /,}")
     fi
+    binary="$build/$name-$shift.out"
+    case $name in
+        wd|wdnow|mem) if [ "$placement" = both ]; then binary="$build/$name-sock-$shift.out"; fi ;;
+    esac
     rm -f -- "$output"
     status=0
-    "${launcher[@]}" "$build/$name-$shift.out" "${args[@]}" > stdout.txt 2> stderr.txt ||
-        status=$?
+    "${launcher[@]}" "$binary" "${args[@]}" > stdout.txt 2> stderr.txt || status=$?
     ok=$(cmp -s "$output" "$ref" && echo yes || echo no)
 
     # a line per thread count, "threads us same|differs", or for one count

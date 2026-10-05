@@ -441,6 +441,10 @@ void top_down_level(
 // a level that finds nothing links no successor, which ends the search
 void wf_bfs(outer_list_node* head, int tid, mt19937& rng) {
     for(outer_list_node* curr = head; curr != nullptr; curr = curr->next) {
+        // what this thread wrote in the level before may still be in its store
+        // buffer, where only it sees it, and the first thread to read this
+        // level's buckets must have made all of that visible to the others
+        atomic_thread_fence(memory_order_seq_cst);
         top_down_level(curr, tid, rng);
     }
 }

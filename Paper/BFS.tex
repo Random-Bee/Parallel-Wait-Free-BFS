@@ -19,6 +19,18 @@
 
 \newtheorem*{remark*}{Remark}
 
+% numbers and claims still to be confirmed by a re-run or a literature check
+\newcommand{\pending}[1]{\textcolor{red}{#1}}
+
+% a conditional on one line, for algorithms that would not fit a column otherwise
+\algnewcommand{\IfThen}[2]{\State \algorithmicif\ #1\ \algorithmicthen\ #2}
+
+\usepgfplotslibrary{groupplots}
+
+% the names of our programs in the experiments
+\newcommand{\wfdo}{WF-DO\xspace}
+\newcommand{\wfdomem}{WF-DO-mem\xspace}
+
 \AtBeginDocument{%
 \providecommand\BibTeX{{%
 Bib\TeX}}}
@@ -47,7 +59,7 @@ Bib\TeX}}}
 
 \ccsdesc[500]{Computing methodologies~Shared memory algorithms}
 
-\keywords{Breadth-first search (BFS), Wait-free algorithms, Parallel graph algorithms}
+\keywords{Breadth-first search (BFS), Direction-optimizing BFS, Wait-free algorithms, Helping, Parallel graph algorithms, Shared memory}
 
 
 
@@ -59,14 +71,19 @@ Bib\TeX}}}
 \maketitle
 
 \input{sections/introduction.tex}
-\input{sections/related_work.tex}
-\input{sections/bfs.tex}
+\input{sections/background.tex}
+\input{sections/wf_topdown.tex}
+\input{sections/wf_dir_opt.tex}
+\input{sections/proof.tex}
+\input{sections/variants.tex}
 \input{sections/experiments.tex}
+\input{sections/related_work.tex}
 \input{sections/conclusion.tex}
 
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{references}
 
 \input{sections/appendix.tex}
+
 
 \end{document}

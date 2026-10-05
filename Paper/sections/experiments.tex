@@ -1,301 +1,392 @@
 \section{Experiments}
-\label{exp_sec}
+\label{sec:experiments}
 
-Our experiments were conducted on \textbf{AMD EPYC 7452 32-Core Processor} with \textbf{256} GB RAM. The code was compiled using \textbf{g++ 7.5.0} without any compiler optimizations. All the times reported are in microseconds. We only show the plots here, the tables are available in the appendix \ref{sec:tables}.
+We compare our method with three of the fastest BFS implementations for shared memory, GAPBS, GBBS and PASGAL, on five graphs, first as they are (Section~\ref{sec:exp-speed}) and then with threads stalled on purpose (Section~\ref{sec:exp-stalls}). We call the method of Section~\ref{sec:dir-opt} \wfdo, and the variant of Section~\ref{sec:variants} \wfdomem.
 
-We evaluate the performance of our wait-free BFS algorithm using random graphs generated with varying sizes and densities as well as real world datasets.
+\subsection{Setup}
+\label{sec:exp-setup}
 
-We evaluate two versions of the wait-free BFS algorithm, one that relies on hardware guarantees for atomicity and another that explicitly marks shared variables as atomic.
+\paragraph{Machine and programs.} We ran every experiment on a machine with two Intel Xeon Platinum 8592+ processors, each with 64 cores, one hardware thread per core, and 1.5~TB of memory, under Linux 4.18. We compare against the direction-optimizing BFS of GAPBS~\cite{gapbs}, which uses OpenMP, and the BFS implementations of GBBS~\cite{gbbs} (commit bd48872) and PASGAL~\cite{pasgal} (commit f7817ba), which use the work-stealing scheduler of ParlayLib~\cite{parlaylib}. The sequential baseline is the direction-optimizing BFS of GAPBS without threads. Each program is a single file that holds the BFS of its library, with the parts of the library's support code that the BFS uses; we changed only how the programs read graphs, place their threads, and time searches. All programs, ours included, read graphs with the same loader, and search the same CSR, in which every edge of the input is stored at both of its ends. We built them all with GCC 15.2.1, with \texttt{-O2}, C++23, and loops and jump targets aligned to 32 bytes.
 
-We also compare our BFS algorithm with Bader and Madduri's \cite{bader_bfs} lock-based BFS algorithm.
+\begin{table}
+    \caption{The graphs, with their numbers of vertices and of input edges, each of which the searches store at both ends, and the number of levels of a search from vertex 0.}
+    \label{tab:graphs}
+    \small
+    \begin{tabular}{l r r r}
+        \toprule
+        Graph & Vertices & Edges & Levels \\
+        \midrule
+        LiveJournal~\cite{livejournal} & 4,847,571 & 68,475,391 & 12 \\
+        Twitter~\cite{kwak_twitter} & 41,652,230 & 1,468,365,182 & 17 \\
+        Road-USA~\cite{netrepo} & 23,947,347 & 28,854,312 & 6,262 \\
+        uk-2002~\cite{boldi_webgraph, davis_suitesparse} & 18,520,486 & 298,113,762 & 29 \\
+        Kronecker~\cite{gapbs, graph500} & 33,554,432 & 523,609,147 & 8 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
 
-% Number experiment references independently of section headings.
-\newcounter{bfsexperiment}
+\paragraph{Graphs.} Table~\ref{tab:graphs} lists the graphs: the social networks LiveJournal and Twitter, the web graph uk-2002, the road network of the USA, and a Kronecker graph with $2^{25}$ vertices that the generator of GAPBS builds with its default of 16 edges per vertex, using the parameters of Graph500. All but the road network have low diameter, and a search of them takes 8 to 29 levels; a search of the road network takes 6,262.
 
-\refstepcounter{bfsexperiment}
-\paragraph{Experiment \thebfsexperiment: Varying Number of Vertices}
-\label{bfs:exp1}
-We fix the number of threads at 16 and vary the number of vertices in the graph keeping number of edges proportional to the number of vertices (50 times). Figure~\ref{fig:exp1} present the results.
+\paragraph{Method.} Where a program's code lands in memory changes its times by up to 5\%. We therefore build every program five times, with its code shifted by 0 to 256 bytes in steps of 64, and report for every point the median of the five builds. A build loads its graph once, and then, for each thread count in turn, rests for about three seconds, pins each thread to an idle CPU of its own, and runs 20 searches from vertex 0, whose average is the build's time for that count. We use two placements. On \emph{one socket}, threads and memory are on the first socket, and we run 1 to 56 threads; at 64, the threads take every core of the socket, and the times become too noisy to compare (Section~\ref{sec:exp-speed}). On \emph{two sockets}, threads are split evenly between the sockets, each still pinned to a CPU, and memory is interleaved over both; we run 1 to 96 threads. On two sockets, a build option makes the helpers of our methods take the owners on their own socket before those on the other; on one socket, they take them round-robin, as in Section~\ref{sec:wf-topdown}. Every measurement gave the distances of a sequential BFS.
 
-\pgfplotstableread[col sep=space]{
-    Vertices   Serial   WaitFree   WaitFreeAtomic   LockBased
-    1e5        139344.6     19755.4    22067.2          61038
-    2e5        311584.8     33606.8    37080            114281.8
-    3e5        488414.8     47269.8    54004            169902.2
-    4e5        663065.4     60732.4    70643.4          230551
-    5e5        835574.8     74156.2    86906.2          284763.8
-    6e5        1015243      86748.6    103275.8         338586.6
-}\bfsA
+\paragraph{Timing.} The threads of every program live across searches, so no search pays for starting them. For GAPBS and GBBS, the time of a search is that of a call of their BFS, which allocates and fills its output and returns after its last parallel loop has joined; PASGAL's BFS reuses arrays that it set up once. For our methods, a search starts when the main thread publishes it, includes the threads resetting their shares of the arrays, and ends when the first call returns, at which point the distances are final (Section~\ref{sec:bg-method}). In the runs of Section~\ref{sec:exp-stalls} without stalls, on LiveJournal with 16 threads, the last call returned within 2~$\mu$s of the first, under 0.02\% of a search.
+
+\subsection{Without Stalls}
+\label{sec:exp-speed}
+
+\begin{table*}
+    \caption{Each program's best time, in ms per search, over all thread counts on one and two sockets, with the thread count and the number of sockets at which it was reached. The sequential baseline runs on one socket. The fastest program on each graph is in bold.}
+    \label{tab:best}
+    \small
+    \begin{tabular}{l r r r r r r}
+        \toprule
+        Graph & Sequential & \wfdo & \wfdomem & GAPBS & GBBS & PASGAL \\
+        \midrule
+        LiveJournal & 126.5 & \textbf{5.8} (56, 1) & 5.9 (48, 1) & 9.9 (32, 1) & 7.8 (96, 2) & 10.8 (96, 2) \\
+        Twitter & 2894.4 & \textbf{58.7} (96, 2) & 62.9 (96, 2) & 78.0 (56, 1) & 96.0 (56, 1) & 155.6 (56, 1) \\
+        Road-USA & 985.3 & 131.0 (24, 1) & \textbf{117.9} (24, 1) & 295.6 (8, 1) & 975.7 (16, 1) & 128.7 (56, 1) \\
+        uk-2002 & 1284.5 & \textbf{35.2} (56, 1) & 35.3 (56, 1) & 49.7 (48, 1) & 46.8 (56, 1) & 101.1 (96, 2) \\
+        Kronecker & 1175.9 & \textbf{18.7} (96, 2) & 20.6 (96, 2) & 35.2 (48, 1) & 44.9 (56, 1) & 98.6 (56, 1) \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
+% how each program looks in every plot of this section
+\pgfplotsset{
+    wfdo/.style={blue, mark=*},
+    wfdomem/.style={cyan!70!black, mark=square*, densely dashed},
+    gapbs/.style={red, mark=triangle*},
+    gbbs/.style={orange!85!black, mark=diamond*},
+    pasgal/.style={green!50!black, mark=pentagon*},
+    seq/.style={black, densely dotted, no marks, line width=0.8pt},
+}
+
+% median ms per search, each with one decimal: Figure~\ref{fig:scaling} plots them and the appendix prints them verbatim
+\pgfplotstableread{
+t wd mem gapbs gbbs pasgal
+1 141.4 142.5 146.8 210.8 335.0
+2 74.4 75.4 77.3 106.1 187.4
+4 38.6 39.1 41.6 56.1 100.1
+8 19.9 20.0 23.1 29.7 53.3
+16 10.9 10.9 13.6 16.8 28.6
+24 8.0 8.0 10.4 12.6 20.0
+32 6.8 6.7 9.9 10.5 16.1
+40 6.1 6.2 10.1 9.4 13.5
+48 5.9 5.9 11.1 8.7 11.9
+56 5.8 6.0 13.2 8.1 11.8
+}\dataOneLJ
+\pgfplotstableread{
+t wd mem gapbs gbbs pasgal
+1 3068.2 3056.4 3012.2 3957.4 6911.9
+2 1538.4 1539.1 1535.7 1972.7 3438.6
+4 768.0 768.8 762.7 988.7 1734.5
+8 386.0 384.0 382.5 500.3 881.4
+16 195.6 195.0 198.9 257.0 447.6
+24 133.1 132.7 136.4 177.9 303.2
+32 103.3 103.0 107.2 140.6 236.8
+40 86.9 86.2 90.8 119.5 202.2
+48 76.8 76.5 80.4 105.4 180.4
+56 70.3 69.7 78.0 96.0 155.6
+}\dataOneTwitter
+\pgfplotstableread{
+t wd mem gapbs gbbs pasgal
+1 1133.4 1016.0 1121.1 1501.4 3750.9
+2 548.4 486.7 640.7 1362.2 2105.0
+4 292.3 263.7 427.5 1260.2 1162.9
+8 179.0 164.3 295.6 1003.6 644.1
+16 137.1 126.2 372.4 975.7 345.1
+24 131.0 117.9 484.6 999.7 237.6
+32 133.3 121.8 613.1 1034.7 184.7
+40 146.5 132.3 891.3 1036.5 156.7
+48 161.3 145.8 1232.1 1009.1 140.3
+56 165.7 156.4 1690.8 1018.0 128.7
+}\dataOneRoad
+\pgfplotstableread{
+t wd mem gapbs gbbs pasgal
+1 1284.3 1324.1 1309.5 1588.9 3947.2
+2 657.7 680.8 681.0 796.6 2162.7
+4 327.3 338.0 343.8 402.5 1128.9
+8 165.3 170.4 178.2 204.6 592.4
+16 85.5 87.7 94.7 108.0 308.7
+24 59.8 61.1 67.9 76.5 211.6
+32 47.3 48.1 56.3 62.2 161.3
+40 42.0 42.5 51.1 53.8 133.5
+48 36.4 36.7 49.7 49.0 114.7
+56 35.2 35.3 52.2 46.8 102.0
+}\dataOneUK
+\pgfplotstableread{
+t wd mem gapbs gbbs pasgal
+1 1085.2 1089.0 1237.1 1812.1 5558.2
+2 548.9 549.4 630.8 905.8 2699.4
+4 280.7 276.4 316.6 454.7 1342.2
+8 139.1 138.4 161.4 231.3 670.1
+16 70.9 70.3 83.6 121.0 338.8
+24 48.2 47.9 57.8 84.8 227.9
+32 37.0 37.1 45.4 66.8 171.1
+40 30.5 30.3 37.9 56.0 137.6
+48 26.3 26.3 35.2 49.8 115.1
+56 23.7 23.4 37.7 44.9 98.6
+}\dataOneKron
+\pgfplotstableread{
+t wd mem gapbs gbbs pasgal
+1 144.3 146.2 144.8 222.4 344.7
+2 99.2 99.1 99.1 127.7 258.4
+4 51.1 52.1 54.8 68.1 138.5
+8 26.3 26.4 31.0 36.6 72.5
+16 14.7 14.9 18.7 20.1 38.2
+24 11.1 10.9 15.0 14.7 26.9
+32 9.1 9.1 13.5 12.0 20.9
+40 8.1 8.2 12.1 10.5 17.7
+48 7.4 7.5 13.3 9.5 15.7
+56 7.2 7.3 14.4 8.8 14.3
+64 6.7 6.9 21.2 8.4 13.5
+80 6.6 6.7 23.9 7.9 11.6
+96 6.8 6.9 24.5 7.8 10.8
+}\dataTwoLJ
+\pgfplotstableread{
+t wd mem gapbs gbbs pasgal
+1 3112.0 3068.6 3041.4 4021.2 6931.6
+2 1828.2 1820.0 1776.3 2229.0 4871.9
+4 902.6 898.9 877.0 1126.1 2547.7
+8 451.1 449.4 442.3 572.5 1329.3
+16 228.6 227.6 230.4 300.4 687.6
+24 155.9 156.0 166.3 215.4 469.7
+32 120.2 122.1 138.1 173.4 365.1
+40 99.9 102.1 119.6 152.4 305.3
+48 87.1 89.0 110.5 140.8 269.6
+56 77.7 80.6 103.0 132.0 243.9
+64 72.0 75.0 103.4 127.8 226.2
+80 63.8 66.7 107.2 126.2 204.2
+96 58.7 62.9 117.0 129.1 190.5
+}\dataTwoTwitter
+\pgfplotstableread{
+t wd mem gapbs gbbs pasgal
+1 1205.0 1031.0 1172.8 1530.6 3780.2
+2 688.6 614.4 779.6 1742.6 2874.2
+4 406.1 372.4 640.7 1783.5 1588.6
+8 279.8 273.3 520.8 1471.9 899.9
+16 227.9 231.2 556.3 1349.1 508.2
+24 218.5 206.2 709.8 1359.6 375.5
+32 209.6 194.6 894.0 1353.1 290.3
+40 204.4 188.4 1225.3 1382.0 245.8
+48 205.0 191.4 1547.2 1404.5 215.8
+56 208.6 195.5 1959.3 1441.7 196.7
+64 213.9 200.1 2516.6 1414.4 180.8
+80 234.9 228.7 3975.7 1508.0 164.3
+96 256.3 264.8 5986.1 1537.8 159.9
+}\dataTwoRoad
+\pgfplotstableread{
+t wd mem gapbs gbbs pasgal
+1 1308.9 1351.9 1335.8 1614.5 4058.6
+2 745.7 761.7 762.0 872.2 2904.4
+4 376.9 379.0 385.2 444.4 1519.0
+8 187.5 192.0 200.6 228.6 800.4
+16 98.4 99.4 110.0 123.3 423.7
+24 68.2 69.9 83.6 89.9 293.6
+32 53.6 54.9 72.1 75.9 226.6
+40 47.0 47.5 67.1 68.7 188.2
+48 41.1 41.4 66.6 64.6 162.4
+56 37.6 39.2 66.5 63.1 144.0
+64 36.5 36.2 72.6 60.8 128.6
+80 36.7 37.0 94.0 61.2 110.0
+96 36.2 36.8 118.7 66.3 101.1
+}\dataTwoUK
+\pgfplotstableread{
+t wd mem gapbs gbbs pasgal
+1 1110.3 1106.8 1246.2 1845.0 5726.9
+2 651.5 645.9 698.2 1038.1 4074.8
+4 332.3 333.2 351.3 530.8 2042.2
+8 162.2 161.0 177.8 269.7 1043.4
+16 80.9 81.0 93.7 141.4 533.5
+24 54.5 54.3 65.9 99.1 359.9
+32 41.2 41.7 53.6 79.7 273.1
+40 33.3 34.7 46.3 68.8 221.8
+48 28.8 29.6 44.0 62.5 186.6
+56 25.2 26.4 43.1 58.9 162.0
+64 22.9 24.0 47.7 56.2 143.7
+80 19.8 21.7 44.4 53.6 120.1
+96 18.7 20.6 54.9 54.6 107.8
+}\dataTwoKron
+
+\begin{figure*}
+    \centering
+    \pgfplotsset{
+        scaling/.style={
+            scale only axis, width=2.6cm, height=2.4cm,
+            xmode=log, log basis x=2, xtick={1,4,16,64}, xticklabels={1,4,16,64},
+            ymode=log,
+            tick label style={font=\scriptsize}, label style={font=\scriptsize},
+            title style={font=\footnotesize, yshift=-0.8ex},
+            grid=major, grid style={gray!25},
+            every axis plot/.append style={line width=0.6pt, mark size=1.1pt},
+        },
+        onesocket/.style={xtick={1,4,16,56}, xticklabels={1,4,16,56}},
+    }
+    \newcommand{\scalingplots}[3]{%
+        \addplot[wfdo] table[x=t, y=wd] {#1};
+        \addplot[wfdomem] table[x=t, y=mem] {#1};
+        \addplot[gapbs] table[x=t, y=gapbs] {#1};
+        \addplot[gbbs] table[x=t, y=gbbs] {#1};
+        \addplot[pasgal] table[x=t, y=pasgal] {#1};
+        \addplot[seq] coordinates {(1,#2) (#3,#2)};
+    }
+    \begin{tikzpicture}
+    \begin{groupplot}[
+        group style={group size=5 by 2, horizontal sep=0.8cm, vertical sep=0.9cm, xlabels at=edge bottom, ylabels at=edge left},
+        scaling, xlabel={Threads},
+    ]
+    \nextgroupplot[onesocket, title={LiveJournal}, ylabel={One socket (ms)}, legend to name=scalinglegend, legend columns=6, legend style={font=\footnotesize, draw=none, /tikz/every even column/.append style={column sep=0.8em}}]
+    \scalingplots{\dataOneLJ}{126.5}{56}
+    \legend{\wfdo, \wfdomem, GAPBS, GBBS, PASGAL, Sequential}
+    \nextgroupplot[onesocket, title={Twitter}]
+    \scalingplots{\dataOneTwitter}{2894.4}{56}
+    \nextgroupplot[onesocket, title={Road-USA}]
+    \scalingplots{\dataOneRoad}{985.3}{56}
+    \nextgroupplot[onesocket, title={uk-2002}]
+    \scalingplots{\dataOneUK}{1284.5}{56}
+    \nextgroupplot[onesocket, title={Kronecker}]
+    \scalingplots{\dataOneKron}{1175.9}{56}
+    \nextgroupplot[ylabel={Two sockets (ms)}]
+    \scalingplots{\dataTwoLJ}{132.5}{96}
+    \nextgroupplot
+    \scalingplots{\dataTwoTwitter}{2956.6}{96}
+    \nextgroupplot
+    \scalingplots{\dataTwoRoad}{1048.4}{96}
+    \nextgroupplot
+    \scalingplots{\dataTwoUK}{1316.3}{96}
+    \nextgroupplot
+    \scalingplots{\dataTwoKron}{1190.6}{96}
+    \end{groupplot}
+    \end{tikzpicture}
+
+    \vspace{0.5ex}
+    \pgfplotslegendfromname{scalinglegend}
+    \caption{Median time per search, against the number of threads, on one socket (top) and two sockets (bottom). Both axes are logarithmic; the dotted line is the sequential baseline.}
+    \Description{Ten plots of search time against thread count, one per graph and placement, for the five parallel programs and the sequential baseline.}
+    \label{fig:scaling}
+\end{figure*}
+
+Table~\ref{tab:best} gives each program's best time, over all thread counts and both placements, and Figure~\ref{fig:scaling} its time at every thread count. \wfdo is the fastest program on four of the five graphs, by 1.33 to 1.89$\times$ over the fastest of the other three, and its best time is 1.33 to 2.26$\times$ below that of GAPBS on all five. On the road network, the best time of PASGAL is 2\% below that of \wfdo, and that of \wfdomem is 1.09$\times$ below that of PASGAL. Against the sequential baseline, \wfdo reaches a speedup of 21.9$\times$ on LiveJournal, 49.3$\times$ on Twitter, 36.5$\times$ on uk-2002 and 63.0$\times$ on Kronecker, but only 7.5$\times$ on the road network, where \wfdomem reaches 8.4$\times$.
+
+\paragraph{Against GAPBS\@.} The lead of \wfdo over GAPBS grows with the number of threads. On one and two threads, the two are within 4\% of each other on LiveJournal, Twitter and uk-2002, and \wfdo is 14 to 15\% faster on Kronecker. At 56 threads on one socket, GAPBS takes 1.11$\times$ the time of \wfdo on Twitter, 1.48$\times$ on uk-2002, 1.59$\times$ on Kronecker and 2.28$\times$ on LiveJournal. GAPBS reaches its best time at 32 to 56 threads and slows down after it, and on the road network already after 8 threads, where it takes 296~ms, against 1.7~s at 56 threads.
+
+\paragraph{Against GBBS and PASGAL\@.} GBBS is the fastest of the other programs on LiveJournal and uk-2002, and keeps improving up to 96 threads on LiveJournal, but on the road network it takes about 1~s on one socket from 8 threads on, as long as the sequential baseline. The best times of PASGAL are 1.9 to 5.3$\times$ above those of \wfdo on the four low-diameter graphs, but PASGAL keeps scaling on the road network, where it overtakes \wfdo from 48 threads on (Section~\ref{sec:exp-road}).
+
+\paragraph{The variant with two nodes.} On one socket, \wfdomem is within 4\% of \wfdo on LiveJournal, Twitter, uk-2002 and Kronecker. On the road network, it takes 6 to 11\% less time than \wfdo at every thread count up to 56, one thread included. On two sockets, \wfdo is 4 to 10\% faster than \wfdomem on Twitter and Kronecker from 56 threads on.
+
+\paragraph{One socket or two.} At the same thread count, \wfdo is slower on two sockets than on one: it takes 1.06 to 1.38$\times$ as long from 2 to 56 threads, and 1.26 to 1.67$\times$ on the road network. The second socket pays off only at the highest thread counts. At 96 threads, \wfdo takes 58.7~ms on Twitter and 18.7~ms on Kronecker, 1.20 and 1.27$\times$ less than its best time on one socket. On LiveJournal, uk-2002 and the road network, its best time is on one socket, as is that of GAPBS on every graph.
+
+\paragraph{One thread.} On one thread, \wfdo takes 6 to 15\% longer than the sequential baseline on LiveJournal, Twitter and the road network, as long on uk-2002, and 8\% less on Kronecker.
+
+\paragraph{Noise.} We leave out 64 threads on one socket. With every core of the socket taken by a thread, the threads compete with the rest of the system for the cores, and most programs become slower and noisier than at 56 threads: GAPBS by 46 to 95\% on every graph, \wfdo by up to 33\%, and \wfdomem by up to 140\% on LiveJournal, whose five builds land near either 7 or 15~ms. At the points we report, the median spread between the fastest and the slowest build of a point is 1.9 to 2.8\% for our methods, GBBS and PASGAL, and 7.4\% for GAPBS.
+
+\subsection{The Road Network}
+\label{sec:exp-road}
+
+\begin{table}
+    \caption{The time of a level of \wfdo on Road-USA, in $\mu$s per thread, by part, on one and two sockets. Expanding a thread's own bucket and helping include the scans of neighbor lists that they make; the rest is mostly the few bottom-up levels. From profiles of the 20 timed searches.}
+    \label{tab:road}
+    \small
+    \setlength{\tabcolsep}{4pt}
+    \begin{tabular}{l r r r r r r}
+        \toprule
+        & \multicolumn{3}{c}{One socket} & \multicolumn{3}{c}{Two sockets} \\
+        \cmidrule(lr){2-4} \cmidrule(lr){5-7}
+        Threads & 8 & 24 & 56 & 8 & 16 & 64 \\
+        \midrule
+        Own bucket & 20.0 & 8.5 & 6.4 & 34.6 & 25.2 & 12.3 \\
+        Helping & 4.9 & 8.6 & 12.5 & 16.2 & 22.8 & 34.6 \\
+        Visiting entries & 0.7 & 1.7 & 4.0 & 1.3 & 2.4 & 6.2 \\
+        Planning & 0.5 & 1.1 & 1.9 & 1.3 & 1.9 & 2.4 \\
+        Rest & 2.5 & 1.0 & 0.8 & 2.9 & 1.5 & 0.8 \\
+        \midrule
+        Level & 28.6 & 20.9 & 25.6 & 56.4 & 53.8 & 56.2 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+A search of the road network has 6,262 levels of about 3,800 vertices each, so at 56 threads a thread owns about 70 vertices of a level, and the work of a level is small next to the cost of sharing it: helping owners that are still busy with their buckets, visiting the $T$ entries of the level's node, and planning the level. Table~\ref{tab:road} breaks the time of a level into these parts. On one socket, the time that a thread spends on its own bucket falls from 20.0~$\mu$s at 8 threads to 6.4~$\mu$s at 56, while helping grows from 4.9 to 12.5~$\mu$s, and visiting entries and planning together from 1.2 to 5.9~$\mu$s; past 24 threads, these costs grow faster than a thread's own share of the work shrinks, and a level takes longer. They come mostly from reading cache lines that another core has just written: of the loads that another core's cache serves, about 40\% read $\mathit{dist}$, in the scans for undiscovered neighbors, and about a third read $\mathit{vis}$. On two sockets, over half of these transfers cross between the sockets, 40 to 43\% of the loads from memory go to the other socket, and a level takes about twice as long as on one socket from 8 threads on. PASGAL keeps scaling on the road network because each of its tasks explores up to 128 vertices from a local queue before it synchronizes, so that one of its rounds can cover several levels~\cite{pasgal, vgc_hashbag}. Helpers that take the owners on their own socket first (Section~\ref{sec:exp-setup}) lower the best two-socket time on the road network by 35\% for \wfdo and by 37\% for \wfdomem, in runs that alternate with the round-robin order, which Table~\ref{tab:road} profiles.
+
+On the road network, the method of Section~\ref{sec:wf-topdown}, which expands every level top-down, is the fastest of all the programs: its best time is 94.2~ms, at 24 threads on one socket, 1.39$\times$ below that of \wfdo and 1.37$\times$ below that of PASGAL. A search of the road network is top-down at all but a few of its levels, so \wfdo gains little there from going bottom-up, while its top-down levels do more than those of the method of Section~\ref{sec:wf-topdown}: they are planned, they discover vertices with a CAS, and they count the edges of the vertices that they discover (Section~\ref{sec:do-plan}). Planning alone takes about 1.1~$\mu$s of a level at 24 threads (Table~\ref{tab:road}), or about 7~ms of a search.
+
+\subsection{Stalled Threads}
+\label{sec:exp-stalls}
+
+The runs above have no delays other than those that the machine causes itself. A program that waits for all of its threads at the end of every level or round is held up by each delayed thread, while in our methods the other threads take over the work of a delayed thread and go on (Section~\ref{sec:wf-topdown}). To measure the difference, we stall threads on purpose, on LiveJournal with 16 threads and memory on one socket. A stalled thread busy-waits for a set time when it starts its work in a level or round, so that it holds that work while it waits, as a thread preempted in the middle of its share would: our methods stall at the start of every level, GAPBS at the start of every top-down and bottom-up step, and GBBS and PASGAL at the first vertex or block of edges that a worker takes in a round. The stalled threads are the last of the 16, so that the threads that run the sequential parts of GAPBS, GBBS and PASGAL never stall. Each point is the median of five runs of 20 searches, with the programs taking turns, and every run gave correct distances. Without stalls, the programs take within 5\% of their times at 16 threads in Section~\ref{sec:exp-speed}.
+
+\pgfplotstableread{
+k wd mem gapbs gbbs pasgal
+0 11.0 11.0 14.2 17.0 29.1
+1 11.6 11.3 22.7 19.4 31.5
+2 12.5 11.8 22.7 20.6 31.9
+4 12.9 12.6 22.9 21.1 32.6
+8 14.7 14.5 23.7 23.2 33.7
+12 17.0 17.0 25.1 23.6 35.3
+15 18.4 18.5 25.5 24.7 35.4
+}\dataStallCount
+\pgfplotstableread{
+us wd mem gapbs gbbs pasgal
+10 10.9 10.8 13.9 17.0 29.2
+20 10.9 11.0 14.2 17.0 29.1
+50 11.1 11.0 14.4 17.3 29.9
+100 11.0 11.0 14.9 17.1 29.5
+200 11.4 11.1 15.6 17.3 29.6
+500 11.3 11.2 17.7 18.2 30.6
+1000 11.5 11.4 22.1 19.7 31.8
+2000 12.0 11.7 33.3 24.1 35.8
+5000 12.8 12.0 65.7 40.7 51.3
+10000 12.6 12.3 128.9 72.0 82.6
+}\dataStallLength
+
+\pgfplotsset{
+    stalls/.style={
+        width=\columnwidth, height=4.8cm,
+        ylabel={Time per search (ms)},
+        tick label style={font=\scriptsize}, label style={font=\scriptsize},
+        grid=major, grid style={gray!25},
+        legend columns=5, legend style={font=\scriptsize, draw=none, at={(0.5,1.02)}, anchor=south, /tikz/every even column/.append style={column sep=0.4em}},
+        every axis plot/.append style={line width=0.6pt, mark size=1.3pt},
+    },
+}
 
 \begin{figure}
     \centering
     \begin{tikzpicture}
-    \begin{axis}[
-        width=0.45\textwidth,
-        height=0.3\textwidth,
-        xlabel={Vertices},
-        ylabel={Execution Time ($\mu$s)},
-        legend pos=north west,
-        xtick=data,
-        xticklabels={1,2,3,4,5,6},
-        ymajorgrids=true,
-        grid style=dashed,
-        enlarge x limits=0.05,
-        tick label style={font=\small},
-        label style={font=\small},
-        legend style={font=\small},
-        legend style={
-            font=\scriptsize,
-            cells={anchor=west},
-            inner sep=2pt,
-            column sep=2pt
-        }
-    ]
-    
-    \addplot table[x=Vertices, y=Serial] {\bfsA};
-    \addlegendentry{Serial}
-    
-    \addplot table[x=Vertices, y=WaitFree] {\bfsA};
-    \addlegendentry{Wait-Free}
-    
-    \addplot table[x=Vertices, y=WaitFreeAtomic] {\bfsA};
-    \addlegendentry{Wait-Free (Atomic)}
-    
-    \addplot table[x=Vertices, y=LockBased] {\bfsA};
-    \addlegendentry{Lock-Based}
-    
+    \begin{axis}[stalls, xlabel={Threads stalled, of 16}, xtick={0,1,2,4,8,12,15}, ymin=0, ymax=40]
+    \addplot[wfdo] table[x=k, y=wd] {\dataStallCount};
+    \addplot[wfdomem] table[x=k, y=mem] {\dataStallCount};
+    \addplot[gapbs] table[x=k, y=gapbs] {\dataStallCount};
+    \addplot[gbbs] table[x=k, y=gbbs] {\dataStallCount};
+    \addplot[pasgal] table[x=k, y=pasgal] {\dataStallCount};
+    \legend{\wfdo, \wfdomem, GAPBS, GBBS, PASGAL}
     \end{axis}
     \end{tikzpicture}
-    \caption{Execution time of BFS for varying number of vertices.}
-    \Description{Execution time of BFS for varying number of vertices.}
-    \label{fig:exp1}
+    \caption{Median time per search on LiveJournal with 16 threads on one socket, against the number of threads that stall for 1~ms at the start of every level or round.}
+    \Description{Search time against the number of stalled threads: GAPBS jumps when one thread stalls, GBBS and PASGAL rise steadily, and our two methods rise slowly and stay the fastest.}
+    \label{fig:stall-count}
 \end{figure}
-
-From Figure \ref{fig:exp1}, we observe that as the number of vertices increases, the wait-free BFS shows a consistent and substantial speedup compared to the existing parallel BFS with the wait-free version achieving up to $11\times$ speedup over the serial BFS and $4\times$ speedup over the existing parallel BFS by using $16$ threads. The version relying on hardware atomicity performs slightly better than the explicitly atomic version, but both variants achieve a significant speedup.
-
-\refstepcounter{bfsexperiment}
-\paragraph{Experiment \thebfsexperiment: Varying Graph Density}
-\label{bfs:exp2}
-We fix the number of vertices at $5e4$, number of threads at 64 and vary the density of the graph. Figure~\ref{fig:exp2} present the results.
-
-\pgfplotstableread[col sep=space]{
-    Density   Serial   WaitFree   WaitFreeAtomic   LockBased
-    1         247092.4     20563.6    21823            66997.6
-    5         1186723      52643      57167.8          195032
-    10        2339696.8    89930.4    100727.2         299954.2
-    25        5801718.6    192167     213233.6         506012.4
-    50        11578280.2   378123.4   431672.8         814425.8
-    100       23380493     737423     818978.8         1431971
-}\bfsB
 
 \begin{figure}
     \centering
     \begin{tikzpicture}
-    \begin{axis}[
-        width=0.45\textwidth,
-        height=0.3\textwidth,
-        xlabel={Density (Percent)},
-        ylabel={Execution Time ($\mu$s)},
-        legend pos=north west,
-        xtick=data,
-        xticklabels={1,5,10,25,50,100},
-        ymajorgrids=true,
-        grid style=dashed,
-        enlarge x limits=0.05,
-        tick label style={font=\small},
-        label style={font=\small},
-        legend style={font=\small},
-        legend style={
-            font=\scriptsize,
-            cells={anchor=west},
-            inner sep=2pt,
-            column sep=2pt
-        }
-    ]
-    
-    \addplot table[x=Density, y=Serial] {\bfsB};
-    \addlegendentry{Serial}
-    
-    \addplot table[x=Density, y=WaitFree] {\bfsB};
-    \addlegendentry{Wait-Free}
-    
-    \addplot table[x=Density, y=WaitFreeAtomic] {\bfsB};
-    \addlegendentry{Wait-Free (Atomic)}
-    
-    \addplot table[x=Density, y=LockBased] {\bfsB};
-    \addlegendentry{Lock-Based}
-    
+    \begin{axis}[stalls, xlabel={Stall per level or round ($\mu$s), one thread of 16}, xmode=log, ymode=log,
+        xtick={10,100,1000,10000}, xticklabels={10,100,1000,10000},
+        ytick={10,20,50,100}, yticklabels={10,20,50,100}, ymin=8, ymax=160]
+    \addplot[wfdo] table[x=us, y=wd] {\dataStallLength};
+    \addplot[wfdomem] table[x=us, y=mem] {\dataStallLength};
+    \addplot[gapbs] table[x=us, y=gapbs] {\dataStallLength};
+    \addplot[gbbs] table[x=us, y=gbbs] {\dataStallLength};
+    \addplot[pasgal] table[x=us, y=pasgal] {\dataStallLength};
+    \legend{\wfdo, \wfdomem, GAPBS, GBBS, PASGAL}
     \end{axis}
     \end{tikzpicture}
-    \caption{Execution time of BFS algorithms for varying graph densities.}
-    \Description{Execution time of BFS algorithms for varying graph densities.}
-    \label{fig:exp2}
+    \caption{Median time per search on LiveJournal with 16 threads on one socket, against how long one thread stalls at the start of every level or round. Both axes are logarithmic; without stalls, the times are within 3\% of those at 10~$\mu$s.}
+    \Description{Search time against the length of the stall of one thread: GAPBS, GBBS and PASGAL grow with the stall from about 500 microseconds on, while our two methods stay flat.}
+    \label{fig:stall-length}
 \end{figure}
 
-From Figure \ref{fig:exp2}, we observe that  the wait-free BFS maintains its efficiency as graph density increases. The speedup remains consistent across different densities, with the wait-free version offering up to $32\times$ faster execution than the sequential BFS and $2\times$ faster than existing parallel BFS using $64$ threads, especially for denser graphs. While both versions exhibit increasing overhead with higher densities, the explicitly atomic variant incurs a modest performance penalty.
+\paragraph{Number of stalled threads.} Figure~\ref{fig:stall-count} stalls from 0 to 15 of the 16 threads, each for 1~ms per level or round. One stalled thread raises the time of GAPBS from 14.2 to 22.7~ms, since every step waits for it at the barrier, and more stalled threads add little, up to 25.5~ms with 15. GBBS and PASGAL rise more slowly, from 17.0 to 24.7~ms and from 29.1 to 35.4~ms, since a stalled worker delays a round only when it holds part of it. \wfdo rises from 11.0 to 12.9~ms with 4 stalled threads, and to 18.4~ms with 15: the threads that are not stalled take over the work of those that are, and only once most threads stall do the few left carry the first millisecond of every level alone. With threads stalled, \wfdo is 1.4 to 2.0$\times$ faster than GAPBS.
 
-\refstepcounter{bfsexperiment}
-\paragraph{Experiment \thebfsexperiment: Varying Number of Threads}
-\label{bfs:exp3}
-We perform the experiment on a random graph with $5e5$ vertices and $2.5e7$ edges. We also perform the experiment two real world datasets, \textit{LiveJournal} \cite{livejournal} and \textit{Sina Weibo} \cite{sinaweibo}. Figure~\ref{fig:exp3_1} present the results for random graph, Figure~\ref{fig:exp3_2} present the results for \textit{LiveJournal} \cite{livejournal} graph and, Figure~\ref{fig:exp3_3} present the results for \textit{Sina Weibo} \cite{sinaweibo} graph.
+\paragraph{Length of a stall.} Figure~\ref{fig:stall-length} stalls one thread for 10~$\mu$s to 10~ms per level or round. Stalls of up to 100~$\mu$s change no program by more than 5\%. Beyond that, the time of GAPBS grows by about one stall per step, to 128.9~ms at 10~ms, 9.0$\times$ its time without stalls, and GBBS and PASGAL grow to 72.0 and 82.6~ms, 4.2 and 2.8$\times$ theirs. \wfdo stays between 10.9 and 12.8~ms at every length; at 10~ms it takes 16\% longer than without stalls, and is 10.2$\times$ faster than GAPBS, 5.7$\times$ faster than GBBS and 6.6$\times$ faster than PASGAL. \wfdomem behaves the same, within 0.8~ms of \wfdo in both experiments.
 
-\pgfplotstableread[col sep=space]{
-    Threads   WaitFree   WaitFreeAtomic   LockBased
-    2         471627.4     550741      2267025.2
-    4         251506.2     296599.6    1036392.2
-    8         136896.6     161544.2    553816.8
-    16        74470.8      86648.6     285779.8
-    32        48459.8      53259.2     217453.2
-    64        48378.6      53296       147583.6
-}\bfsC
-
-\begin{figure}
-    \centering
-    \begin{tikzpicture}
-    \begin{axis}[
-        width=0.45\textwidth,
-        height=0.3\textwidth,
-        xlabel={Threads},
-        ylabel={Execution Time ($\mu$s)},
-        legend pos=north east,
-        xtick=data,
-        xticklabels={2,4,8,16,32,64},
-        ymajorgrids=true,
-        grid style=dashed,
-        enlarge x limits=0.05,
-        tick label style={font=\small},
-        label style={font=\small},
-        legend style={font=\small},
-        legend style={
-            font=\scriptsize,
-            cells={anchor=west},
-            inner sep=2pt,
-            column sep=2pt
-        }
-    ]
-    
-    \addplot table[x=Threads, y=WaitFree] {\bfsC};
-    \addlegendentry{Wait-Free}
-    
-    \addplot table[x=Threads, y=WaitFreeAtomic] {\bfsC};
-    \addlegendentry{Wait-Free (Atomic)}
-    
-    \addplot table[x=Threads, y=LockBased] {\bfsC};
-    \addlegendentry{Lock-Based}
-    
-    \end{axis}
-    \end{tikzpicture}
-    \caption{Execution time of BFS algorihtms for varying number of threads on random graph.}
-    \Description{Execution time of BFS algorihtms for varying number of threads on random graph.}
-    \label{fig:exp3_1}
-\end{figure}
-
-\pgfplotstableread[col sep=space]{
-    Threads   WaitFree   WaitFreeAtomic   LockBased
-    2         2126836.8     2650480.2    4365973.8
-    4         1130817.4     1420545.4    2232363
-    8         601362        755491.6     1192019.2
-    16        362708.6      440648.8     623655.4
-    32        235820.6      269026.2     399018.6
-    64        172725.2      233587.4     294441.6
-}\bfsD
-
-\begin{figure}
-    \centering
-    \begin{tikzpicture}
-    \begin{axis}[
-        width=0.45\textwidth,
-        height=0.3\textwidth,
-        xlabel={Threads},
-        ylabel={Execution Time ($\mu$s)},
-        legend pos=north east,
-        xtick=data,
-        xticklabels={2,4,8,16,32,64},
-        ymajorgrids=true,
-        grid style=dashed,
-        enlarge x limits=0.05,
-        tick label style={font=\small},
-        label style={font=\small},
-        legend style={font=\small},
-        legend style={
-            font=\scriptsize,
-            cells={anchor=west},
-            inner sep=2pt,
-            column sep=2pt
-        }
-    ]
-    
-    \addplot table[x=Threads, y=WaitFree] {\bfsD};
-    \addlegendentry{Wait-Free}
-    
-    \addplot table[x=Threads, y=WaitFreeAtomic] {\bfsD};
-    \addlegendentry{Wait-Free (Atomic)}
-    
-    \addplot table[x=Threads, y=LockBased] {\bfsD};
-    \addlegendentry{Lock-Based}
-    
-    \end{axis}
-    \end{tikzpicture}
-    \caption{Execution time of BFS algorithms for varying number of threads on \textit{LiveJournal} \cite{livejournal} graph.}
-    \Description{Execution time of BFS algorithms for varying number of threads on \textit{LiveJournal} \cite{livejournal} graph.}
-    \label{fig:exp3_2}
-\end{figure}
-
-\pgfplotstableread[col sep=space]{
-    Threads   WaitFree   WaitFreeAtomic   LockBased
-    2         25707716.4     35663801    50833290.2
-    4         13594550.8     19191065.4  33334874.2
-    8         7132199        10601925    16136456.4
-    16        5038638        7583175     10040580.6
-    32        2527066.8      4045410.6   6730842.4
-    64        2008005        2976349     5643021.2
-}\bfsE
-
-\begin{figure}
-    \centering
-    \begin{tikzpicture}
-    \begin{axis}[
-        width=0.45\textwidth,
-        height=0.3\textwidth,
-        xlabel={Threads},
-        ylabel={Execution Time ($\mu$s)},
-        legend pos=north east,
-        xtick=data,
-        xticklabels={2,4,8,16,32,64},
-        ymajorgrids=true,
-        grid style=dashed,
-        enlarge x limits=0.05,
-        tick label style={font=\small},
-        label style={font=\small},
-        legend style={font=\small},
-        legend style={
-            font=\scriptsize,
-            cells={anchor=west},
-            inner sep=2pt,
-            column sep=2pt
-        }
-    ]
-    
-    \addplot table[x=Threads, y=WaitFree] {\bfsE};
-    \addlegendentry{Wait-Free}
-    
-    \addplot table[x=Threads, y=WaitFreeAtomic] {\bfsE};
-    \addlegendentry{Wait-Free (Atomic)}
-    
-    \addplot table[x=Threads, y=LockBased] {\bfsE};
-    \addlegendentry{Lock-Based}
-    
-    \end{axis}
-    \end{tikzpicture}
-    \caption{Execution time of BFS for varying number of threads on \textit{Sina Weibo} \cite{sinaweibo} graph.}
-    \Description{Execution time of BFS for varying number of threads on \textit{Sina Weibo} \cite{sinaweibo} graph.}
-    \label{fig:exp3_3}
-\end{figure}
-
-This experiment explores the performance impact of varying thread counts on both random and real-world graphs. On both the \textit{LiveJournal} and \textit{Sina Weibo} graphs, the wait-free BFS reduces execution time by a factor of $2\times$ to $3\times$ compared to the existing parallel BFS and more than $20\times$ compared to the serial BFS on $64$ threads. The performance improvement is more pronounced in larger real-world graphs, where the algorithm's ability to distribute work efficiently across threads becomes more critical.
-
-\paragraph{Hardware Atomicity vs. Explicit Atomic Operations}
-Across all experiments, the variant that relies on hardware atomicity consistently outperforms the explicitly atomic version, albeit by a small margin. The overhead introduced by explicit atomic operations becomes more apparent in high-density graphs and larger thread counts, though the overall performance remains substantially better than the existing BFS.
-
-\paragraph{Summary}
-Our experimental evaluation demonstrates that the proposed wait-free BFS algorithm significantly outperforms the existing BFS algorithm across various graph sizes, densities, and thread counts. The wait-free BFS algorithm demonstrates robust scalability and efficiency across diverse experimental settings. It offers substantial performance improvements over existing BFS implementations, making it well-suited for large-scale graph processing in parallel environments.
+The stalled threads themselves return late. With 10~ms stalls, the stalled thread of \wfdo returns 130.7~ms after the search starts, since it stalls again at every level it walks through, even one that is over, while the stragglers of \wfdomem skip the levels that are over (Section~\ref{sec:mem-reuse}) and return after 40.7~ms. Neither delays the result, which is final once the first call returns (Section~\ref{sec:bg-method}).

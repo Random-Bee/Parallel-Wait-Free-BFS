@@ -1,108 +1,64 @@
-\balance
 \appendix
-\section*{APPENDIX}
 
-\section{Tables}
-\label{sec:tables}
+\section{Times per Thread Count}
+\label{sec:app-times}
 
-The following tables present the execution times of the BFS algorithms for various configurations, including different numbers of vertices, graph densities, and thread counts. The results are based on the experiments described in the main text.
+Tables~\ref{tab:app-lj} to~\ref{tab:app-kron} list the median times per search that Figure~\ref{fig:scaling} plots, for every graph, program, thread count and placement; Section~\ref{sec:exp-setup} describes how we measured them.
 
-\begin{table}[H]
-    \small
-    \setlength{\tabcolsep}{3pt}
-    \centering
-    \begin{tabular}{|c|c|c|c|c|}
-        \hline
-        \textbf{Vertices} & \textbf{Serial} & \textbf{Wait-Free} & \textbf{Wait-Free (Atomic)} & \textbf{Lock-Based} \\
-        \hline
-        $1e5$ & 139344 & 19755 & 22067 & 61038 \\
-        $2e5$ & 311584 & 33606 & 37080 & 114281 \\
-        $3e5$ & 488414 & 47269 & 54004 & 169902 \\
-        $4e5$ & 663065 & 60732 & 70643 & 230551 \\
-        $5e5$ & 835574 & 74156 & 86906 & 284763 \\
-        $6e5$ & 1015243 & 86748 & 103275 & 338586 \\
-        \hline
-    \end{tabular}
-    \caption{Experiment \ref{bfs:exp1} : Execution time of BFS for varying number of vertices.}
-    \label{tab:exp1}
-\end{table}
+\pgfplotstableset{
+    times/.style={
+        string type,
+        column type=r,
+        columns={t, wd, mem, gapbs, gbbs, pasgal},
+        columns/t/.style={column name=$T$},
+        columns/wd/.style={column name=\wfdo},
+        columns/mem/.style={column name=\wfdomem},
+        columns/gapbs/.style={column name=GAPBS},
+        columns/gbbs/.style={column name=GBBS},
+        columns/pasgal/.style={column name=PASGAL},
+        begin table={\begin{tabular}[t]},
+        every head row/.style={before row=\toprule, after row=\midrule},
+        every last row/.style={after row=\bottomrule},
+    },
+}
 
-\begin{table}[H]
-    \small
+% one table per graph, with the two placements side by side; the braces keep the
+% outer tabular from taking the ampersands that pgfplotstable reads as its own
+\newcommand{\timestable}[2]{%
+    \footnotesize
     \setlength{\tabcolsep}{4pt}
-    \centering
-    \begin{tabular}{|c|c|c|c|}
-        \hline
-        \textbf{Threads} & \textbf{Wait-Free} & \textbf{Wait-Free (Atomic)} & \textbf{Lock-Based} \\
-        \hline
-        $2$ & 471627 & 550741 & 2267025 \\
-        $4$ & 251506 & 296599 & 1036392 \\
-        $8$ & 136896 & 161544 & 553816 \\
-        $16$ & 74470 & 86648 & 285779 \\
-        $32$ & 48459 & 53259 & 217453 \\
-        $64$ & 48378 & 53296 & 147583 \\
-        \hline
-    \end{tabular}
-    \caption{Experiment \ref{bfs:exp3} : Execution time of BFS algorihtms for varying number of threads on random graph.}
-    \label{tab:exp3_1}
-\end{table}
+    \begin{tabular}{@{}c@{\hspace{2.5em}}c@{}}
+        One socket & Two sockets \\[0.3ex]
+        {\pgfplotstabletypeset[times]{#1}} & {\pgfplotstabletypeset[times]{#2}} \\
+    \end{tabular}%
+}
 
-\begin{table}[H]
-    \small
-    \setlength{\tabcolsep}{4pt}
-    \centering
-    \begin{tabular}{|c|c|c|c|}
-        \hline
-        \textbf{Threads} & \textbf{Wait-Free} & \textbf{Wait-Free (Atomic)} & \textbf{Lock-Based} \\
-        \hline
-        $2$ & 2126836 & 2650480 & 4365973 \\
-        $4$ & 1130817 & 1420545 & 2232363 \\
-        $8$ & 601362 & 755491 & 1192019 \\
-        $16$ & 362708 & 440648 & 623655 \\
-        $32$ & 235820 & 269026 & 399018 \\
-        $64$ & 172725 & 233587 & 294441 \\
-        \hline
-    \end{tabular}
-    \caption{Experiment \ref{bfs:exp3} : Execution time of BFS algorithms for varying number of threads on \textit{LiveJournal} \cite{livejournal} graph.}
-    \label{tab:exp3_2}
-\end{table}
+\begin{table*}
+    \caption{Median time per search on LiveJournal, in ms, at each number of threads $T$, on one socket (left) and two sockets (right). The sequential baseline takes 126.5~ms on one socket and 132.5~ms on two.}
+    \label{tab:app-lj}
+    \timestable{\dataOneLJ}{\dataTwoLJ}
+\end{table*}
 
-\begin{table}[H]
-    \small
-    \setlength{\tabcolsep}{4pt}
-    \centering
-    \begin{tabular}{|c|c|c|c|}
-        \hline
-        \textbf{Threads} & \textbf{Wait-Free} & \textbf{Wait-Free (Atomic)} & \textbf{Lock-Based} \\
-        \hline
-        $2$ & 25707716 & 35663801 & 50833290 \\
-        $4$ & 13594550 & 19191065 & 33334874 \\
-        $8$ & 7132199 & 10601925 & 16136456 \\
-        $16$ & 5038638 & 7583175 & 10040580 \\
-        $32$ & 2527066 & 4045410 & 6730842 \\
-        $64$ & 2008005 & 2976349 & 5643021 \\
-        \hline
-    \end{tabular}
-    \caption{Experiment \ref{bfs:exp3} : Execution time of BFS for varying number of threads on \textit{Sina Weibo} \cite{sinaweibo} graph.}
-    \label{tab:exp3_3}
-\end{table}
+\begin{table*}
+    \caption{Median time per search on Twitter, in ms, at each number of threads $T$, on one socket (left) and two sockets (right). The sequential baseline takes 2894.4~ms on one socket and 2956.6~ms on two.}
+    \label{tab:app-twitter}
+    \timestable{\dataOneTwitter}{\dataTwoTwitter}
+\end{table*}
 
-\begin{table}[H]
-    \small
-    \setlength{\tabcolsep}{2.5pt}
-    \centering
-    \begin{tabular}{|c|c|c|c|c|}
-        \hline
-        \shortstack{\textbf{Density}\\\textbf{(Percent)}} & \textbf{Serial} & \textbf{Wait-Free} & \textbf{Wait-Free (Atomic)} & \textbf{Lock-Based} \\
-        \hline
-        $1$ & 247092 & 20563 & 21823 & 66997 \\
-        $5$ & 1186723 & 52643 & 57167 & 195032 \\
-        $10$ & 2339696 & 89930 & 100727 & 299954 \\
-        $25$ & 5801718 & 192167 & 213233 & 506012 \\
-        $50$ & 11578280 & 378123 & 431672 & 814425 \\
-        $100$ & 23380493 & 737423 & 818978 & 1431971 \\
-        \hline
-    \end{tabular}
-    \caption{Experiment \ref{bfs:exp2} : Execution time of BFS algorithms for varying graph densities.}
-    \label{tab:exp2}
-\end{table}
+\begin{table*}
+    \caption{Median time per search on Road-USA, in ms, at each number of threads $T$, on one socket (left) and two sockets (right). The sequential baseline takes 985.3~ms on one socket and 1048.4~ms on two.}
+    \label{tab:app-road}
+    \timestable{\dataOneRoad}{\dataTwoRoad}
+\end{table*}
+
+\begin{table*}
+    \caption{Median time per search on uk-2002, in ms, at each number of threads $T$, on one socket (left) and two sockets (right). The sequential baseline takes 1284.5~ms on one socket and 1316.3~ms on two.}
+    \label{tab:app-uk}
+    \timestable{\dataOneUK}{\dataTwoUK}
+\end{table*}
+
+\begin{table*}
+    \caption{Median time per search on Kronecker, in ms, at each number of threads $T$, on one socket (left) and two sockets (right). The sequential baseline takes 1175.9~ms on one socket and 1190.6~ms on two.}
+    \label{tab:app-kron}
+    \timestable{\dataOneKron}{\dataTwoKron}
+\end{table*}

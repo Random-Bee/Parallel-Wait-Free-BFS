@@ -6,6 +6,7 @@
 #include <sys/time.h>
 #include "../CPU_helpers/cpu_affinity.hpp"
 #include "../Graph_helpers/graph_reader.hpp"
+#include "../Benchmark/stall.hpp"
 
 
 // The parts of GAPBS's support headers (platform_atomics.h, pvector.h,
@@ -422,7 +423,16 @@ int64_t BUStep(const Graph &g, pvector<NodeID> &dist, Bitmap &front,
                Bitmap &next, NodeID depth) {
   int64_t awake_count = 0;
   next.reset();
+#ifdef STALLS
+  // a stalled thread waits once per step, before it takes a chunk, so the loop
+  // gets a parallel region of its own to wait in
+  #pragma omp parallel reduction(+ : awake_count)
+  {
+  STALL_POINT(omp_get_thread_num(), omp_get_num_threads(), depth);
+  #pragma omp for schedule(dynamic, 1024)
+#else
   #pragma omp parallel for reduction(+ : awake_count) schedule(dynamic, 1024)
+#endif
   for (NodeID u=0; u < g.num_nodes(); u++) {
     if (dist[u] < 0) {
       for (NodeID v : g.in_neigh(u)) {
@@ -435,6 +445,9 @@ int64_t BUStep(const Graph &g, pvector<NodeID> &dist, Bitmap &front,
       }
     }
   }
+#ifdef STALLS
+  }
+#endif
   return awake_count;
 }
 
@@ -445,6 +458,7 @@ int64_t TDStep(const Graph &g, pvector<NodeID> &dist,
   #pragma omp parallel
   {
     QueueBuffer<NodeID> lqueue(queue);
+    STALL_POINT(omp_get_thread_num(), omp_get_num_threads(), depth);
     #pragma omp for reduction(+ : scout_count) nowait
     for (auto q_iter = queue.begin(); q_iter < queue.end(); q_iter++) {
       NodeID u = *q_iter;

@@ -1,0 +1,172 @@
+\section{Correctness and Wait-Freedom}
+\label{sec:proof}
+
+This section proves that the method of Section~\ref{sec:dir-opt} meets the specification of Section~\ref{sec:bg-method}: when any call of \textsc{BFS}$(s)$ returns, $\mathit{dist}$ holds the distances from $s$, and no later step changes them (Theorem~\ref{thm:correct}), and every call returns after a bounded number of the calling thread's own steps (Theorem~\ref{thm:waitfree}). The method is that of Algorithms~\ref{alg:wf-do} and~\ref{alg:wf-bu}, which expand top-down levels with Algorithm~\ref{alg:wf-td} and \textsc{Discover}, and keep their buckets as in Algorithm~\ref{alg:bucket}. We reason about the algorithms as written, with every thread making its memory accesses in the order they list, which the compiler barriers of our implementation ensure. Sections~\ref{sec:pf-defs} to~\ref{sec:pf-waitfree} assume sequential consistency: the memory accesses of all threads take effect one at a time, in an order that keeps the program order of every thread. Section~\ref{sec:pf-tso} then shows that the proof holds under TSO as well. The proof never assumes that a thread takes another step, so it holds whatever delays the threads suffer, even if some of them stop for good.
+
+\subsection{Definitions}
+\label{sec:pf-defs}
+
+In this section we write $\delta(v) = \infty$ for a vertex that $s$ cannot reach, so that the levels $L_0, \ldots, L_D$, where $D$ is the largest finite distance, hold exactly the vertices that $s$ reaches. Lemma~\ref{lem:list} shows that the nodes form a single list, in which $N_d$ is the node of depth $d$. A thread \emph{enters} $N_d$ when it calls \textsc{ChoosePlan}$(N_d)$, and \emph{finishes} $N_d$ when its call of \textsc{ExpandLevel}$(N_d)$ or \textsc{ScanLevel}$(N_d)$ returns; from the time its call of \textsc{ChoosePlan}$(N_d)$ returns until it finishes $N_d$, the thread is \emph{in level $d$}. Apart from its proposal, which it writes in \textsc{ChoosePlan}$(N_d)$, a thread appends to the buckets of $N_{d+1}$, writes $\mathit{dist}$, $\mathit{code}$ and $\mathit{vis}$, writes stamps, and writes the fields of the entries of $N_d$ only while it is in some level $d$, possibly long after other threads have moved on.
+
+Let $\tau_d$ be the time of the first CAS on $N_d.\mathit{planner}$ (line~\ref{ln:do-claim}). If some thread enters $N_d$, this CAS exists, and it comes before every call of \textsc{ChoosePlan}$(N_d)$ returns, since a call returns after its own CAS, or after reading $\mathit{planner}$ set by an earlier one. Every read that a thread in level $d$ makes of the buckets of $N_d$ thus comes after $\tau_d$. The \emph{reference prefix} $S_{d,t}$ is the set of vertices at positions $0$ to $k-1$ of $B_{d,t}$, where $k$ is the size of $B_{d,t}$ at time $\tau_d$. By Lemma~\ref{lem:buckets}, these positions keep their vertices for the rest of the search, and a thread that reads the size of $B_{d,t}$ after $\tau_d$ reads at least $k$.
+
+A call of \textsc{Expand}$(N, u)$ \emph{expands $u$ completely} if it examines every neighbor of $u$ and then sets $\mathit{vis}[u]$ (line~\ref{ln:td-vis}). A call that returns has either expanded $u$ completely or read $\mathit{vis}[u]$ set by a call that did. A block is \emph{scanned in level $d$} once a call of \textsc{ScanBlock} for it by a thread in level $d$ has returned.
+
+\subsection{Buckets, Levels, and Plans}
+\label{sec:pf-structures}
+
+\begin{lemma}[Buckets]
+\label{lem:buckets}
+If a thread reads $k$ as the size of a bucket $B$ and afterwards reads $B.\mathit{array}$, then the array it finds holds the first $k$ vertices appended to $B$ at positions $0$ to $k-1$, and these positions hold the same vertices in every array of $B$ for the rest of the search.
+\end{lemma}
+\begin{proof}
+Only the owner of $B$ writes it. It writes each vertex before increasing $\mathit{size}$ (line~\ref{ln:bk-size}), and publishes a new array only after copying the vertices appended so far into it (line~\ref{ln:bk-array}). When the size became $k$, the array then in $\mathit{array}$ held the first $k$ vertices, and every array published later holds copies of them. The reader reads $\mathit{array}$ after the size, so it finds that array or a later one, and in either case positions $0$ to $k-1$ hold the first $k$ vertices. No array is freed during the search, and no position of an array is written twice.
+\end{proof}
+
+\begin{lemma}[The level list]
+\label{lem:list}
+Every node has at most one successor, which is linked by a CAS from null and never replaced, and a node is fully set up, with its depth set, its buckets empty and its $\mathit{planner}$ empty, before it is linked. The nodes linked from $N_0$ thus form a single list, in which the node $d$ steps from $N_0$ has depth $d$, and every thread walks this list from $N_0$, in order.
+\end{lemma}
+\begin{proof}
+A successor is linked only by the CAS of line~\ref{ln:td-cas}, from null, so at most one CAS on the field $\mathit{next}$ of a node succeeds, and nothing writes the field afterwards. A thread sets up its node before trying the CAS. A node whose CAS fails has been seen by no other thread, since no pointer to it was ever published, and its thread changes only its depth before trying it again at a later level. A node linked to a node of depth $d$ has depth $d+1$ (\textsc{AddLevel}). Every thread starts at $N_0$ and moves on only along $\mathit{next}$.
+\end{proof}
+
+\begin{lemma}[Plans]
+\label{lem:plans}
+For every node $N_d$ that some thread enters, every call of \textsc{ChoosePlan}$(N_d)$ returns the same plan, $P_d$, and every thread calls \textsc{ChoosePlan}$(N_d)$ with $P_{d-1}$, where $P_{-1}$ is the plan before level 0.
+\end{lemma}
+\begin{proof}
+Only CASes from empty write $N_d.\mathit{planner}$ (line~\ref{ln:do-claim}), so the first one succeeds, and $\mathit{planner}$ never changes after it. The thread $w$ whose CAS succeeds wrote its proposal before its CAS (line~\ref{ln:do-propose}), and writes it only once, since it calls \textsc{ChoosePlan}$(N_d)$ once. Every call reads $\mathit{planner}$ set, and then returns the proposal of the thread it names (line~\ref{ln:do-adopt}), which is that of $w$. The second claim follows by induction on $d$, since a thread calls \textsc{ChoosePlan}$(N_{d+1})$ with the plan that its call for $N_d$ returned.
+\end{proof}
+
+We write $c_d$ for the code of $P_d$, which is 0 if $P_d$ is top-down. Following Section~\ref{sec:do-codes}, the discoveries of a bottom-up level $d$ write the code $c_d + 1$ if $0 < c_d < 255$, and 0 otherwise. A level $e$ \emph{uses} the code $c_e$ if it is positive, and the code that the discoveries of level $e-1$ write if that is positive. A bottom-up plan $P_e$ takes the code that level $e-1$ writes for its discoveries, if that is positive, and otherwise the smallest code larger than every code used by an earlier level, or 0 if that code would exceed 255.
+
+\begin{lemma}[Codes]
+\label{lem:codes}
+Every level uses at most one positive code, and no two levels use the same one.
+\end{lemma}
+\begin{proof}
+If level $e-1$ writes a positive code for its discoveries and $P_e$ is bottom-up, $P_e$ takes that code, so level $e$ uses only one. We show by induction on $e$ that the code used by level $e$, if any, is larger than every code used by an earlier level. If the code is the one that level $e-1$ writes, it is $c_{e-1} + 1$, and $c_{e-1}$ is the largest code used before level $e$, by induction. Otherwise, it is a code $c_e$ chosen larger than every code used before.
+\end{proof}
+
+\subsection{Safety}
+\label{sec:pf-safety}
+
+The proof rests on two properties. The first is that every write is \emph{sound}:
+\begin{itemize}
+    \item[(S1)] every value $x \geq 0$ written to $\mathit{dist}[v]$ is $\delta(v)$;
+    \item[(S2)] every vertex appended to a bucket of $N_d$ is in $L_d$;
+    \item[(S3)] every value written to $\mathit{code}[v]$ is the value that the plans give level $\delta(v)$: 0, or the code that level $\delta(v)$ uses.
+\end{itemize}
+The second is that every level is \emph{ready} by the time its first plan is claimed: for every node $N_d$ that some thread enters, at time $\tau_d$,
+\begin{itemize}
+    \item[(R1)] $\mathit{dist}[u] = \delta(u)$ for every vertex $u$ of $L_0 \cup \cdots \cup L_d$;
+    \item[(R2)] every vertex of $L_d$ is in the reference prefix $S_{d,t}$ of some thread $t$;
+    \item[(R3)] if levels $d-1$ and $d$ are both bottom-up and $c_d > 0$, then $\mathit{code}[u] = c_d$ for every vertex $u$ of $L_d$.
+\end{itemize}
+Sound writes never change a distance or a code once it is set, since all writes to $\mathit{dist}[v]$ write $\delta(v)$, and all writes to $\mathit{code}[v]$ write the same value by (S3). So as long as every write is sound, (R1) to (R3) keep holding after $\tau_d$; (R2) does too, by Lemma~\ref{lem:buckets}. Lemmas~\ref{lem:discover} to~\ref{lem:bu-complete} assume that every write made so far is sound, and that (R1) to (R3) hold for $N_d$; Lemma~\ref{lem:ready} then proves both properties together.
+
+\begin{lemma}[Discoveries]
+\label{lem:discover}
+If a thread in level $d$ appends a vertex $v$ to a bucket of $N_{d+1}$, then $\delta(v) = d+1$, and the values it writes to $\mathit{dist}[v]$ and $\mathit{code}[v]$ are $d+1$ and the value the plans give level $d+1$. If it writes $\mathit{code}[v] = c$ in \textsc{WriteCodes}$(N_d, c)$, then $\delta(v) = d$, and $c$ is the code that level $d$ uses.
+\end{lemma}
+\begin{proof}
+In a top-down level, the thread appends $v$ while expanding a vertex $u$ taken from a bucket of $N_d$, so $\delta(u) = d$ by (S2), and $\delta(v) \leq d + 1$. It appends $v$ only after reading $\mathit{dist}[v] = -1$ in that expansion, after $\tau_d$, when (R1) holds; hence $\delta(v) > d$. Its CAS writes $d+1$ (line~\ref{ln:do-cas}). In a bottom-up level, the thread appends $v$ after reading $\mathit{dist}[v] = -1$ after $\tau_d$, so again $\delta(v) > d$, and after finding a neighbor $u$ of $v$ with $\mathit{code}[u] = c_d > 0$, or, if $c_d = 0$, with $\mathit{dist}[u] = d$. In the first case, some write gave $u$ the code $c_d$, which level $d$ uses, so $\delta(u) = d$ by (S3) and Lemma~\ref{lem:codes}; in the second, $\delta(u) = d$ by (S1). So $\delta(v) = d+1$, and the thread writes $d+1$ and the code that level $d$ writes for its discoveries, which is the value the plans give level $d+1$. In \textsc{WriteCodes}$(N_d, c)$, the vertices come from buckets of $N_d$, and are in $L_d$ by (S2), and $c = c_d$ is the code that level $d$ uses. None of these arguments depends on how long the thread waits between its reads and its writes, since (R1) and the codes keep holding.
+\end{proof}
+
+\begin{lemma}[Certificates]
+\label{lem:certs}
+The writes that let other threads skip work come after that work:
+\begin{itemize}
+    \item[(a)] When a thread sets $\mathit{vis}[u]$, every neighbor $v$ of $u$ with $\delta(v) = \delta(u) + 1$ has been appended to a bucket of $N_{\delta(v)}$ and has $\mathit{dist}[v] = \delta(v)$.
+    \item[(b)] In a top-down level $d$, when thread $o$ sets $\mathit{last}_{d,o} = i$, the vertices at positions $0$ to $i$ of $B_{d,o}$ have been expanded completely, and when a thread sets $\mathit{done}_{d,o}$, every vertex of $S_{d,o}$ has been.
+    \item[(c)] In a bottom-up level $d$, when thread $o$ sets $\mathit{last}_{d,o} = k$, or a thread stamps block $k$ of $o$ with $d$, that block has been scanned in level $d$, and when a thread sets $\mathit{done}_{d,o}$, every block of $o$ has been.
+    \item[(d)] When thread $o$ sets $\mathit{codesLast}_{d,o} = i$, the vertices at positions $0$ to $i$ of $B_{d,o}$ have the code $c_d$, and when a thread sets $\mathit{codesDone}_{d,o}$, every vertex of $S_{d,o}$ has it.
+\end{itemize}
+\end{lemma}
+\begin{proof}
+Each of these writes follows, in the program order of its thread, either the work it certifies, or the reading of an earlier certificate for that work.
+
+(a) A thread sets $\mathit{vis}[u]$ only after examining every neighbor $v$ of $u$. For each $v$, it either read $\mathit{dist}[v] = -1$ and appended $v$ before its CAS on $\mathit{dist}[v]$, which writes $\delta(v)$ or fails because $\mathit{dist}[v]$ is already set; or it read $\mathit{dist}[v]$ set, by a thread that had appended $v$ before, since both \textsc{Discover} and \textsc{ScanBlock} append a vertex before writing its distance. The appends were to a bucket of $N_{\delta(v)}$, by (S2).
+
+(b) Thread $o$ sets $\mathit{last}_{d,o} = i$ after its call of \textsc{Expand} on position $i$ has returned (line~\ref{ln:td-last}), and a call returns only after $u$ has been expanded completely. A thread sets $\mathit{done}_{d,o}$ (line~\ref{ln:td-done}) after reading the size of $B_{d,o}$ after $\tau_d$, so that the positions it read cover $S_{d,o}$, and after calling \textsc{Expand} on every one of them, or, as a helper, on every one after $\mathit{last}_{d,o}$ as it read it, the positions up to which are covered by the first claim.
+
+(c) Thread $o$ publishes $\mathit{last}_{d,o} = k$ (line~\ref{ln:bu-last}) after scanning block $k$, or after reading its stamp equal to $d$; a helper stamps a block (line~\ref{ln:bu-stamp}) only after scanning it. A stamp equal to $d$ was written after a scan in level $d$: stamps start at $-1$ in every search, and a thread in a level other than $d$ stamps with another depth. The owner sets $\mathit{done}_{d,o}$ after its loop over all of its blocks, which it leaves early only on reading $\mathit{done}_{d,o}$ set already. A helper sets it after taking every block after $\mathit{last}_{d,o}$ as it read it, skipping a block only if the block is now at or before $\mathit{last}_{d,o}$, or stamped with $d$, and stopping only on reading $\mathit{done}_{d,o}$ set already.
+
+(d) As in (b), with \textsc{WriteCodes} in place of \textsc{ExpandLevel}.
+\end{proof}
+
+\begin{lemma}[Top-down levels]
+\label{lem:td-complete}
+If $P_d$ is top-down, then when a thread finishes $N_d$, every vertex $v$ of $L_{d+1}$ has been appended to a bucket of $N_{d+1}$ and has $\mathit{dist}[v] = d+1$, and if $L_d$ is not empty, $N_{d+1}$ has been linked.
+\end{lemma}
+\begin{proof}
+Let $X$ be the thread, let $v \in L_{d+1}$, and let $u$ be a neighbor of $v$ in $L_d$. By (R2), $u$ is at some position $i$ of a reference prefix $S_{d,o}$, and $X$ visited entry $o$ of $N_d$ after $\tau_d$. If it found $\mathit{done}_{d,o}$ set, $u$ had been expanded completely, by Lemma~\ref{lem:certs}(b). Otherwise, the size of $B_{d,o}$ that $X$ read was more than $i$, so the bucket was not empty. If $o = X$, $X$ called \textsc{Expand} on position $i$; if not, it either did so or found $\mathit{last}_{d,o} \geq i$, in which case $u$ had been expanded completely, by Lemma~\ref{lem:certs}(b). A call of \textsc{Expand} returns only after $u$ has been expanded completely, so in every case $u$ has been, and by Lemma~\ref{lem:certs}(a), $v$ has been appended to a bucket of $N_{d+1}$ and has $\mathit{dist}[v] = d+1$. Finally, if $L_d$ is not empty, take any $u \in L_d$ and its entry $o$ as above. Either $X$ found $\mathit{done}_{d,o}$ set, by a thread that had linked $N_{d+1}$ or found it linked before it took the bucket (line~\ref{ln:td-add}), or $X$ took the bucket itself and did the same.
+\end{proof}
+
+\begin{lemma}[Bottom-up levels]
+\label{lem:bu-complete}
+If $P_d$ is bottom-up, then when a thread finishes $N_d$, $N_{d+1}$ has been linked, and every vertex $v$ of $L_{d+1}$ has been appended to a bucket of $N_{d+1}$, has $\mathit{dist}[v] = d+1$, and has the code that level $d$ writes for its discoveries.
+\end{lemma}
+\begin{proof}
+Let $X$ be the thread. It linked $N_{d+1}$, or found it linked, before scanning (\textsc{ScanLevel}). Let $v \in L_{d+1}$, in block $k$ of thread $o$. Thread $X$ took every block of its own and then visited every other thread, so by Lemma~\ref{lem:certs}(c), whichever way it passed block $k$ of $o$, whether by scanning it, finding it at or before $\mathit{last}_{d,o}$ or stamped with $d$, or finding $\mathit{done}_{d,o}$ set, the block has been scanned in level $d$ by some thread $Y$. The call of \textsc{ScanBlock} of $Y$ read $\mathit{dist}[v]$ after $\tau_d$. If it read a value other than $-1$, a thread had discovered $v$, writing its code and appending it before its distance. Otherwise, $v$ was a candidate, and $Y$ tested its neighbors, among them a vertex $u$ of $L_d$. If $c_d = 0$, the test reads $\mathit{dist}[u] = d$, which holds by (R1). If $c_d > 0$, the test reads $\mathit{code}[u] = c_d$: by (R3) if level $d-1$ was bottom-up, and otherwise because $Y$ had finished \textsc{WriteCodes}$(N_d, c_d)$ before scanning (line~\ref{ln:bu-codes}), which gave every vertex of $L_d$ its code, by Lemma~\ref{lem:certs}(d) and (R2), as for expansions in Lemma~\ref{lem:td-complete}. Either way the test succeeds, and $Y$ appended $v$, wrote its code, and set $\mathit{dist}[v] = d+1$ (lines~\ref{ln:bu-append} to~\ref{ln:bu-dist}).
+\end{proof}
+
+\begin{lemma}[Soundness and readiness]
+\label{lem:ready}
+Every write is sound, and (R1) to (R3) hold for every node $N_d$ that some thread enters, from $\tau_d$ to the end of the search.
+\end{lemma}
+\begin{proof}
+Suppose some write is not sound, and let $w$ be the first such write. We first show by induction on $d$ that (R1) to (R3) hold for every node $N_d$ with $\tau_d$ before $w$, from $\tau_d$ up to $w$. For $N_0$ they hold before any call starts (Section~\ref{sec:td-structure}). For $d > 0$, the thread whose CAS on $N_d.\mathit{planner}$ came first finished $N_{d-1}$ before $\tau_d$, after $\tau_{d-1}$. By induction, (R1) to (R3) held for $N_{d-1}$ in that time, and every write before $w$ is sound, so by Lemma~\ref{lem:td-complete} or~\ref{lem:bu-complete}, when it finished $N_{d-1}$, every vertex of $L_d$ had been appended to a bucket of $N_d$ and had its distance, and if level $d-1$ was bottom-up, the code that level $d-1$ writes for its discoveries, which is $c_d$ if level $d$ is bottom-up too and $c_d > 0$. The appends came before $\tau_d$, so they are in the reference prefixes, and (R1) for the earlier levels holds by induction. This gives (R1) to (R3) at $\tau_d$, and they keep holding up to $w$, since the writes before $w$ are sound. Now $w$ is made by a thread in some level $d$, after the reads of that thread that it depends on, which came after $\tau_d$. Lemma~\ref{lem:discover} then shows that $w$ is sound, a contradiction. Every write is therefore sound, and the induction above, which then needs no bound $w$, gives (R1) to (R3) for every node that some thread enters.
+\end{proof}
+
+\subsection{The End of the Search}
+\label{sec:pf-end}
+
+\begin{lemma}[The last level]
+\label{lem:end}
+The list consists of the nodes $N_0$ to $N_{D+1}$. A thread that finishes $N_d$ for $d \leq D$ finds $N_{d+1}$ linked, and a thread that finishes $N_{D+1}$ returns.
+\end{lemma}
+\begin{proof}
+For $d \leq D$, $L_d$ is not empty, so by Lemmas~\ref{lem:td-complete} and~\ref{lem:bu-complete}, $N_{d+1}$ has been linked when a thread finishes $N_d$, and the thread finds it (line~\ref{ln:td-next}). By (S2), every vertex appended to a bucket of $N_{D+1}$ is in $L_{D+1}$, which is empty, so its buckets stay empty. Every proposal for $N_{D+1}$ therefore finds $n_f = 0$, and $P_{D+1}$ is top-down (Section~\ref{sec:do-end}). In \textsc{ExpandLevel}$(N_{D+1})$, every entry is empty, so no thread calls \textsc{AddLevel}$(N_{D+1})$, the only call that can link a successor to $N_{D+1}$, and a thread that finishes $N_{D+1}$ finds $\mathit{next}$ null and returns.
+\end{proof}
+
+\begin{theorem}[Correctness]
+\label{thm:correct}
+When any call of \textsc{BFS}$(s)$ returns, $\mathit{dist}[v] = \delta(v)$ for every vertex $v$ that $s$ reaches, and $\mathit{dist}[v] = -1$ for every other vertex, and no later step of any thread changes $\mathit{dist}$.
+\end{theorem}
+\begin{proof}
+By Lemma~\ref{lem:end}, a call returns only after finishing $N_{D+1}$, and hence after $\tau_{D+1}$, when (R1) holds for $N_{D+1}$: every vertex of $L_0 \cup \cdots \cup L_D$, which are all the vertices $s$ reaches, has its distance. By (S1), no thread writes a value $x \geq 0$ to $\mathit{dist}[v]$ for a vertex $v$ that $s$ does not reach, so these distances stay $-1$. Every later write to $\mathit{dist}[v]$ writes $\delta(v)$, the value already there.
+\end{proof}
+
+The method of Section~\ref{sec:wf-topdown} is the special case in which every plan is top-down, and the same proof applies to it, with $\tau_d$ the time of the first fence that a thread executes before expanding $N_d$ (line~\ref{ln:td-fence}).
+
+\subsection{Wait-Freedom}
+\label{sec:pf-waitfree}
+
+\begin{lemma}[Appends]
+\label{lem:once}
+In a search, a thread appends each vertex at most once, so all the buckets together hold at most $Tn + 1$ vertices.
+\end{lemma}
+\begin{proof}
+A thread appends a vertex $v$ only after reading $\mathit{dist}[v] = -1$, and right after appending it, the thread writes $\mathit{dist}[v]$, or its CAS on it fails because $\mathit{dist}[v]$ is already set. A distance never returns to $-1$, so the thread never reads $\mathit{dist}[v] = -1$ again. The one vertex not appended this way is the source in $N_0$.
+\end{proof}
+
+\begin{theorem}[Wait-freedom]
+\label{thm:waitfree}
+Every call of \textsc{BFS}$(s)$ returns after $O((D+2)(Tn + m) \log n)$ steps of its own thread, whatever the other threads do.
+\end{theorem}
+\begin{proof}
+A call walks the list once, from $N_0$ to $N_{D+1}$ (Lemmas~\ref{lem:list} and~\ref{lem:end}). No loop of the method waits for another thread: every loop runs over a range fixed when it starts, which is the $T$ entries of a node, the positions of a bucket up to the size read, the neighbors of a vertex, or the blocks of a thread, and the only tests of another thread's progress, of a flag $\mathit{done}$, end a loop early. Each CAS is tried once. We count the steps of one call. Choosing a plan reads the $T$ entries of a node and makes at most one CAS, and linking a successor sets up $T$ entries and makes one CAS: $O(T)$ steps per level. Over the whole search, a thread takes every position of every bucket at most once in each of \textsc{ExpandLevel} and \textsc{WriteCodes}, at most $Tn + 1$ positions in all by Lemma~\ref{lem:once}, and it expands each vertex completely at most once, since it then reads its own $\mathit{vis}[u]$, so it examines at most $m$ neighbors in top-down levels in all. In a bottom-up level, it scans each block at most once, reading each of its vertices and the neighbors of the candidates: $O(n + m)$ steps per level. Appends take constant time amortized, and the copies made as buckets grow add up to fewer positions than the buckets' final arrays, $O(Tn)$ in all. Each random order needs a step coprime to its size $k$, which the search for it, moving from a random start and wrapping to 1, finds within $k$ tries of $O(\log k)$ steps each; the orders cost $O((Tn + m) \log n)$ steps over the positions of buckets and the neighbors of vertices, and $O(n \log n)$ steps per level over blocks. Every allocation takes a bounded number of steps (Section~\ref{sec:bg-model}). The sum is $O((D+2)(Tn + m) \log n)$, which does not depend on the steps of any other thread.
+\end{proof}
+
+The bound is loose, and says nothing about speed; what matters for wait-freedom is that it is finite and depends only on $n$, $m$, $T$ and $D$, not on the other threads.
+
+\subsection{Total Store Order}
+\label{sec:pf-tso}
+
+On x86, memory follows TSO rather than sequential consistency (Section~\ref{sec:bg-model}). We model a TSO execution in the usual way~\cite{x86tso}: a store goes first to its thread's store buffer, and later, in program order, to memory; a load returns the newest store to its location in its thread's buffer if there is one, and the value in memory otherwise; and a CAS waits until its thread's buffer is empty, and then acts on memory atomically. We take the time of a store to be the time it reaches memory. Two properties then hold that sequential consistency gives: the stores of a thread reach memory in program order, and its loads and stores take effect in program order, except that a load can take effect before an earlier store of its thread reaches memory.
+
+Every step of the proof draws its conclusions in one of two ways. In the first, a thread reads its own stores, which it always sees. In the second, a thread $X$ reads a value that another thread $Y$ stored, and concludes that it also sees the stores that $Y$ made, or read from other threads, before that store. Three properties of TSO make this hold. The stores of $Y$ reach memory in program order, so its earlier stores are there by the time the one that $X$ read is. A load of $Y$ takes effect before the stores that follow it, so the stores of other threads that $Y$ read had reached memory before its own store did. And the loads of $X$ take effect in program order, so the loads it makes afterwards find all of these stores, or later ones to the same locations.
+
+Only one step needs more. (R2) must hold in memory at $\tau_d$, but the thread that finished $N_{d-1}$ first may still hold some of its appends to the buckets of $N_d$ in its store buffer. This is why $\tau_d$ is the time of the first CAS on $N_d.\mathit{planner}$, or, in the method of Section~\ref{sec:wf-topdown}, of the first fence before $N_d$. The thread that makes this CAS or fence finished $N_{d-1}$ before it, and either one empties its store buffer. At $\tau_d$, memory therefore holds every append that this thread made or saw, which covers all of $L_d$, together with their distances and codes. Every thread reads the buckets of $N_d$ only after its call of \textsc{ChoosePlan}$(N_d)$ returns, or after its own fence, so after $\tau_d$. Every lemma above therefore holds under TSO, with ``has been appended'' and ``has been set'' read as ``has reached memory, or is in the thread's own store buffer''.

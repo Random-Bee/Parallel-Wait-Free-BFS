@@ -1,0 +1,70 @@
+\section{Bounding Memory}
+\label{sec:variants}
+
+The method of Section~\ref{sec:dir-opt} allocates a node for every level, and keeps every node and every bucket array until the search ends, since a delayed thread may still read them. Its memory therefore grows with the number of levels, and with all the vertices appended during the search: a search of the road network with 64 threads allocates a node of 64 entries for each of its 6,262 levels, about 400,000 entries in all, although nearly all of them are finished long before the search ends. This section describes a variant that uses only two nodes, one for the even levels and one for the odd, and reuses each of them two levels later. A thread's bucket in a node then keeps its array from one level to the next, so the memory of the variant depends on the largest levels rather than on all of them. The difficulty is that a node is reused while threads that have fallen behind may still be working on the level it held before.
+
+\subsection{Reusing Nodes}
+\label{sec:mem-reuse}
+
+The two nodes are $M_0$ and $M_1$, and level $d$ uses $M_{d \bmod 2}$. Every bucket carries a \emph{tag}, the level that its vertices belong to. A thread starts level $d$ by emptying its own bucket in $M_{(d+1) \bmod 2}$, which held level $d-1$, and tagging it with $d+1$ (Algorithm~\ref{alg:mem}, line~\ref{ln:mem-tag}); the thread is past level $d-1$ by then. A thread in level $d$ uses a bucket only if it is tagged $d$. A smaller tag means that the owner has not started level $d-1$, and so has appended nothing to the bucket for level $d$. A larger tag means that the owner has started level $d+1$, which it can do only once level $d+1$ has been chosen, by a thread that had finished level $d$.
+
+A thread that found a bucket tagged $d$ can still be overtaken by its owner, which may empty it and refill it for level $d+2$ while the thread reads it. The thread then meets vertices of level $d+2$, or memory not yet written in this search. It therefore takes a vertex $u$ from another thread's bucket only if $u$ is a vertex number and $\mathit{dist}[u] = d$. Every such vertex is in $L_d$, so a thread expands, and writes codes for, only vertices of its own level, whatever it reads.
+
+The fields that record progress change accordingly. Before tagging its bucket in the other node, a thread resets its fields $\mathit{last}$ and $\mathit{codesLast}$ in $M_{d \bmod 2}$, and another thread counts them for level $d$ only while the owner's bucket in the other node is tagged $d+1$. The flag $\mathit{done}$ becomes the latest level at which the owner's work is known to be finished, and a thread in level $d$ skips an owner whose $\mathit{done}$ is at least $d$; a delayed thread may write a smaller level over a larger one, which only makes other threads check finished work again. Stamps already hold levels (Section~\ref{sec:do-bu}).
+
+Instead of a field $\mathit{planner}$ and proposals, each node has a single word that holds the latest level whose plan was chosen, with the direction of that plan. A thread that finds an older level in the word computes a plan and moves the word to its level with a CAS; whether its CAS succeeds or not, it then follows the direction in the word. Besides top-down and bottom-up, the direction can be \emph{done}: the first thread to find all the buckets of a level empty chooses it, and every thread that reads it returns. A thread that finds a later level in the word knows that its own level is over, since a later level has been chosen, by a thread that had finished every level before it. It then moves on to the older of the two levels in the words of the nodes, which is past its own, and continues from there.
+
+Codes follow the depth instead of the plans: level $d$ has the code $d+1$, as long as it fits in a byte. A thread that falls behind skips the plans of the levels it jumps over, so it could not know codes that depend on them. Whether a bottom-up level writes the codes of its frontier first, which depends on the direction of the level before, is chosen together with its direction and kept in the same word, since only the thread that chooses the plan is sure to know the direction of the level before.
+
+\begin{algorithm}
+\caption{The levels of the variant with two nodes, $M_0$ and $M_1$, as thread $t$ runs them. A plan word $W$ holds a level, $W.\mathit{level}$, and the direction chosen for it, $W.\mathit{direction}$.}
+\label{alg:mem}
+\begin{algorithmic}[1]
+\Procedure{BFS}{$s$}
+    \State $d \gets 0$; $P \gets$ the plan before level $0$
+    \Loop
+        \State $N \gets M_{d \bmod 2}$; $N' \gets M_{(d+1) \bmod 2}$
+        \State $W \gets N.\mathit{word}$
+        \If{$W.\mathit{level} < d$}
+            \State $W' \gets$ \Call{Rule}{$P$, $N$, $d$} \Comment{level $d$ and a direction}
+            \State \Call{CAS}{$N.\mathit{word}$, $W$, $W'$} \label{ln:mem-cas}
+            \State $W \gets N.\mathit{word}$
+        \EndIf
+        \If{$W.\mathit{level} > d$} \Comment{level $d$ is over}
+            \State $d \gets \min(M_0.\mathit{word}.\mathit{level}, M_1.\mathit{word}.\mathit{level})$ \label{ln:mem-jump}
+            \State \textbf{continue}
+        \EndIf
+        \IfThen{$W.\mathit{direction}$ is done}{\Return}
+        \State $P \gets$ the plan of level $d$, with direction $W.\mathit{direction}$
+        \State $N.\mathit{last}[t] \gets -1$; $N.\mathit{codesLast}[t] \gets -1$
+        \State empty $N'.B[t]$ and tag it with $d+1$ \label{ln:mem-tag}
+        \State expand level $d$ in direction $W.\mathit{direction}$
+        \State $d \gets d+1$
+    \EndLoop
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Correctness and Wait-Freedom}
+\label{sec:mem-proof}
+
+\begin{theorem}
+\label{thm:mem}
+Theorems~\ref{thm:correct} and~\ref{thm:waitfree} hold for the variant.
+\end{theorem}
+\begin{proof}
+We follow Section~\ref{sec:proof}, with $N_d$ standing for $M_{d \bmod 2}$ from the first CAS that moves its word to $d$, at time $\tau_d$, and $B_{d,t}$ for the bucket of thread $t$ in it while the bucket is tagged $d$. Lemma~\ref{lem:plans} holds with the word of the node in place of $\mathit{planner}$ and the proposals, since every thread in level $d$ follows the direction that the first CAS wrote, and Lemma~\ref{lem:codes} holds because level $d$ uses the code $d+1$. The proof then needs four additions.
+
+First, no part of $M_{d \bmod 2}$ is reused for level $d+2$ before level $d+1$ has been chosen: a thread empties and retags its bucket there, and resets its progress there, only once it has started level $d+1$ or $d+2$, and a word moves to a level only after the level before it has been chosen. The thread whose CAS first chooses level $d+1$ finished level $d$ before, so throughout its pass over level $d$, it sees $M_{d \bmod 2}$ just as Section~\ref{sec:proof} sees $N_d$, except that the bucket of an owner that has not started level $d-1$ holds an older tag and is empty for level $d$. Lemmas~\ref{lem:certs} to~\ref{lem:bu-complete} therefore hold for this thread, and with them (R1) to (R3) for level $d+1$ at $\tau_{d+1}$, as in Lemma~\ref{lem:ready}.
+
+Second, a thread that falls behind can meet reused buckets, but it takes from them only vertices $u$ with $\mathit{dist}[u]$ equal to its level, so every write it makes is sound, by Lemma~\ref{lem:discover}. The certificates it writes after level $d+1$ has been chosen can claim work at level $d$ that it never did. By then, however, the thread that chose level $d+1$ has finished level $d$, so these certificates can only make other threads still in level $d$ skip work that the search no longer needs. A later level ignores them: a $\mathit{done}$ of $d$ is below its own level, and an owner's progress counts only next to the owner's current tag.
+
+Third, the word of a node becomes done only when the thread that moves it there has finished the level before and found the buckets of its level empty. That level is $L_{D+1}$: a thread that has finished level $d-1$ finds the vertices of $L_d$, if there are any, in the buckets tagged $d$, as in (R2). Every call therefore returns at level $D+1$, after $\tau_{D+1}$, and the proof of Theorem~\ref{thm:correct} applies.
+
+Fourth, the level of a thread only grows, since a jump (line~\ref{ln:mem-jump}) goes to a level that has been chosen and is past its own. A call therefore takes at most $D+2$ levels, each in a bounded number of its own steps as in Theorem~\ref{thm:waitfree}, and a jump takes a constant number. Under TSO, the CAS on the word of a node (line~\ref{ln:mem-cas}) takes the place of the CAS on $\mathit{planner}$ in Section~\ref{sec:pf-tso}.
+\end{proof}
+
+\subsection{Memory}
+\label{sec:mem-memory}
+
+The variant keeps two nodes of $T$ entries each, and the bucket of a thread in a node keeps its array for every level that the node holds. The array grows to the largest number of vertices that the thread appends to a level of that parity; its old arrays stay until the search ends, but together hold fewer positions than its current one. Since a thread appends a vertex at most once (Lemma~\ref{lem:once}), the variant needs $O(T)$ entries and $O(\sum_t \max_d |B_{d,t}|) \subseteq O(T \max_d |L_d|)$ positions, against $O(T(D+2))$ entries and $O(Tn)$ positions for the method of Section~\ref{sec:dir-opt}. The two are close on low-diameter graphs, whose largest levels hold a large share of all vertices, and far apart on high-diameter graphs such as road networks, which have thousands of small levels. Section~\ref{sec:experiments} compares the times of the two.

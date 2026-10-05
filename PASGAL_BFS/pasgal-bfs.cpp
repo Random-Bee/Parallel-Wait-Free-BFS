@@ -56,6 +56,7 @@
 
 #include "../CPU_helpers/cpu_affinity.hpp"
 #include "../Graph_helpers/graph_reader.hpp"
+#include "../Benchmark/stall.hpp"
 
 
 // The parts of PASGAL's headers (utils.h, sampler.h, hashbag.h, graph.h) that
@@ -413,6 +414,7 @@ class BFS {
 
   void sparse_relax(size_t id, size_t frontier_size) {
     parallel_for(0, frontier_size, [&](size_t i) {
+      STALL_POINT(parlay::worker_id(), parlay::num_workers(), round);
       NodeId f = frontier[i];
       in_frontier[f] = false;
       if (id == 0 || id == log2_up(dist[f])) {
@@ -438,6 +440,7 @@ class BFS {
 
   void dense_relax([[maybe_unused]] size_t id) {
     parallel_for(0, G.n, [&](NodeId u) {
+      STALL_POINT(parlay::worker_id(), parlay::num_workers(), round);
       if (dist[u] > round + 1) {
         const auto neighbors = G.in_neighors(u);
         for (size_t j = 0; j < neighbors.size(); j++) {

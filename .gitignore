@@ -21,6 +21,8 @@ graphs
 *.vrb
 
 # Compiled paper (keep other PDF assets trackable)
-/Paper/BFS_CC.pdf
+/Paper/*.pdf
 tmp
 *.data
+
+*.disasm
