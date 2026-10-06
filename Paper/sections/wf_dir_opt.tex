@@ -46,10 +46,10 @@ A blocking implementation lets one thread decide and makes the others wait for t
 
 Proposals can differ, since threads read the buckets at different times and late appends change their sizes, but the CAS makes every thread adopt the same one. Which one wins does not matter for correctness, since the method finds the same distances in either direction; the rule only affects speed, and proposals made from the same buckets differ only by the few late copies. Since all threads adopt the same plan for every level, and start from the same plan before level 0, they all propose from the same plan of the level before.
 
-The rule needs $m_f$, the number of edges of the frontier, and it gets it from the top-down level that discovered the frontier. In the method of Section~\ref{sec:wf-topdown}, every thread that finds a vertex undiscovered appends it and writes its distance, so a vertex discovered by two threads at once would have its edges counted twice. Counted that way, $m_f$ would overstate the edges of a large frontier, which can make the rule switch to bottom-up a level too early, and $m_u$, which drops by $m_f$ with every top-down level, would run down too fast. Top-down levels therefore discover a vertex with a CAS on its distance from $-1$ to $d+1$, still after appending it (\textsc{Discover}), and only the thread whose CAS succeeds adds the degree of the vertex to the edge count of its entry in $N_{d+1}$. A thread whose CAS fails has found the vertex discovered by another thread, which appended it first, so the order of Section~\ref{sec:td-order} still holds. After a bottom-up level, the rule takes $m_f = 1$, as GAPBS does.
+The rule needs $m_f$, the number of edges of the frontier, and it gets it from the top-down level that discovered the frontier. In the method of Section~\ref{sec:wf-topdown}, every thread that finds a vertex undiscovered appends it and writes its distance, so a vertex discovered by two threads at once would have its edges counted twice. Counted that way, $m_f$ would overstate the edges of a large frontier, which can make the rule switch to bottom-up a level too early, and $m_u$, which drops by $m_f$ with every top-down level, would run down too fast. Top-down levels therefore discover a vertex with a CAS on its distance from $-1$ to $d+1$, still after appending it (\textsc{Discover}), and only the thread whose CAS succeeds adds the degree of the vertex to the edge count of its entry in $N_{d+1}$. A thread whose CAS fails has found the vertex discovered by another thread, which appended it first, so the order of Section~\ref{sec:td-order} still holds. The count can fall short instead: a thread whose CAS succeeds but that stops before adding the degree, or has not added it yet when a planner reads the count, leaves the edges of that vertex out of $m_f$. This only changes which direction the rule chooses, which does not affect correctness, as above. After a bottom-up level, the rule takes $m_f = 1$, as GAPBS does.
 
 \begin{algorithm}
-\caption{A bottom-up level, as thread $t$ runs it. $P'$ is the plan of the level and $P$ that of the level before; $X_{o,k}$ is the $k$-th block of thread $o$, and $K_o$ the number of its blocks.}
+\caption{A bottom-up level, as thread $t$ runs it. $P'$ is the plan of the level and $P$ that of the level before; $X_{o,k}$ is the $k$-th block of thread $o$, and $K_o$ the number of its blocks. Algorithm~\ref{alg:codes} gives \textsc{WriteCodes}, \textsc{InFrontier} and \textsc{NextCode}.}
 \label{alg:wf-bu}
 \begin{algorithmic}[1]
 \Procedure{ScanLevel}{$N$, $P'$, $P$}
@@ -77,12 +77,28 @@ The rule needs $m_f$, the number of edges of the frontier, and it gets it from t
 \Statex
 \Procedure{ScanBlock}{$N$, $P'$, $X$}
     \ForAll{$v \in X$ with $\mathit{dist}[v] = -1$}
-        \If{some neighbor $u$ of $v$ has $\mathit{code}[u] = P'.\mathit{code}$} \label{ln:bu-test}
+        \If{some neighbor $u$ of $v$ has \Call{InFrontier}{$u$, $N.\mathit{depth}$, $P'.\mathit{code}$}} \label{ln:bu-test}
             \State append $v$ to $N.\mathit{next}.B[t]$ \label{ln:bu-append}
-            \State $\mathit{code}[v] \gets P'.\mathit{code} + 1$ \label{ln:bu-code}
+            \State $\mathit{code}[v] \gets$ \Call{NextCode}{$P'.\mathit{code}$} \label{ln:bu-code}
             \State $\mathit{dist}[v] \gets N.\mathit{depth} + 1$ \label{ln:bu-dist}
         \EndIf
     \EndFor
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{Frontier codes: the test of a bottom-up level whose frontier has the code $c$, the code that its discoveries write, and the pass that writes the codes of a frontier that a top-down level discovered, as thread $t$ runs it.}
+\label{alg:codes}
+\begin{algorithmic}[1]
+\Procedure{InFrontier}{$u$, $d$, $c$}
+    \IfThen{$c > 0$}{\Return $\mathit{code}[u] = c$}
+    \State \Return $\mathit{dist}[u] = d$
+\EndProcedure
+\Statex
+\Procedure{NextCode}{$c$}
+    \IfThen{$0 < c < 255$}{\Return $c + 1$}
+    \State \Return $0$
 \EndProcedure
 \Statex
 \Procedure{WriteCodes}{$N$, $c$}
@@ -112,16 +128,16 @@ A bottom-up level divides the vertices into blocks of consecutive vertices, all 
 
 A helper cannot rely on the owner's $\mathit{last}$ alone, since a delayed owner stops moving it, and every helper of a delayed owner would then scan all of the owner's remaining blocks. A helper therefore stamps every block it finishes with the depth of the level (line~\ref{ln:bu-stamp}), and the owner and the other helpers skip a block whose stamp equals the current depth. Stamps outlive levels: a stamp left by an earlier level holds an older depth, and a thread that has fallen behind can only write the depth of its own level, which is older than the current one. Either way, a stale stamp makes a thread scan a block again, but never skip one that needs scanning.
 
-Scanning a block means testing every vertex $v$ of the block that is still undiscovered (\textsc{ScanBlock}). If $v$ has a neighbor in the frontier, it is at distance $d+1$: the thread appends $v$ to its own bucket in $N_{d+1}$, writes the code of level $d+1$ for $v$, and only then sets $\mathit{dist}[v] = d+1$ (lines~\ref{ln:bu-append} to~\ref{ln:bu-dist}). A thread that finds $v$ discovered therefore finds it in a bucket and with its code. Threads that scan a block at the same time can discover the same vertex, but they all write the same values, so plain stores suffice. Since the discoveries of a bottom-up level go into buckets, as those of a top-down level do, the next level can go in either direction, and its plan can count its frontier.
+Scanning a block means testing every vertex $v$ of the block that is still undiscovered (\textsc{ScanBlock}). If $v$ has a neighbor in the frontier, it is at distance $d+1$: the thread appends $v$ to its own bucket in $N_{d+1}$, writes the code of level $d+1$ for $v$, and only then sets $\mathit{dist}[v] = d+1$ (lines~\ref{ln:bu-append} to~\ref{ln:bu-dist}). A thread that finds $v$ discovered therefore finds it in a bucket and with its code. Threads that scan a block at the same time can discover the same vertex, but they all write the same values, so these writes need no CAS. Since the discoveries of a bottom-up level go into buckets, as those of a top-down level do, the next level can go in either direction, and its plan can count its frontier.
 
 \subsection{Frontier Codes}
 \label{sec:do-codes}
 
 The bottom-up step tests, for neighbor after neighbor, whether a vertex $u$ is in the frontier. The test could read $\mathit{dist}[u] = d$, but it is the step's most frequent memory access, and $\mathit{dist}$ has four bytes per vertex. GAPBS keeps the frontier in a bitmap instead, which it rebuilds for every bottom-up step. A bitmap reused from one level to the next would not do for our method: a thread that has fallen behind would test the frontier of level $d$ against bits that already describe a later level. We keep one byte per vertex, $\mathit{code}[v]$, and give each level that a bottom-up level tests a code of its own, $c_d$, which the plan assigns. Codes are handed out in increasing order and never reused within a search, and a vertex only ever receives the code of its own level. The test $\mathit{code}[u] = c_d$ (line~\ref{ln:bu-test}) is therefore exact at any time, for any thread, however far it has fallen behind.
 
-A bottom-up level $d$ gets the codes of its frontier in one of two ways. If level $d-1$ was bottom-up too, its discoveries wrote $c_d$, which the plan of level $d-1$ reserved, before their distances, so every vertex of level $d$ has its code once level $d-1$ is complete. If level $d-1$ was top-down, whose appends write no codes, then every thread starts level $d$ by writing $c_d$ for the vertices in the buckets of $N_d$ (\textsc{WriteCodes}, line~\ref{ln:bu-codes}). This pass is shared the way an expansion is: a thread writes the codes of its own bucket in order, publishing how far it has got, then writes the rest of every other bucket whose codes are not done yet, and marks a bucket done once its codes are all written. Each entry has a separate pair of fields for this pass, $\mathit{codesLast}$ and $\mathit{codesDone}$, so that it does not disturb the progress of the expansion. A thread starts testing only after the pass, when every vertex of level $d$ has its code. Codes written twice or late are still right, since every vertex in the buckets of $N_d$ is in level $d$. Top-down levels write no codes, since many threads appending nearby vertices would contend for the same cache lines of $\mathit{code}$.
+A bottom-up level $d$ gets the codes of its frontier in one of two ways. If level $d-1$ was bottom-up too, its discoveries wrote $c_d$, which the plan of level $d-1$ reserved, before their distances, so every vertex of level $d$ has its code once level $d-1$ is complete. If level $d-1$ was top-down, whose appends write no codes, then every thread starts level $d$ by writing $c_d$ for the vertices in the buckets of $N_d$ (Algorithm~\ref{alg:wf-bu}, line~\ref{ln:bu-codes}, and \textsc{WriteCodes} in Algorithm~\ref{alg:codes}). This pass is shared the way an expansion is: a thread writes the codes of its own bucket in order, publishing how far it has got, then writes the rest of every other bucket whose codes are not done yet, and marks a bucket done once its codes are all written. Each entry has a separate pair of fields for this pass, $\mathit{codesLast}$ and $\mathit{codesDone}$, so that it does not disturb the progress of the expansion. A thread starts testing only after the pass, when every vertex of level $d$ has its code. Codes written twice or late are still right, since every vertex in the buckets of $N_d$ is in level $d$. Top-down levels write no codes, since many threads appending nearby vertices would contend for the same cache lines of $\mathit{code}$.
 
-Codes fit in a byte, so once the plans have handed out code 255, later bottom-up levels get the code 0, which is the code of a vertex without one, and test $\mathit{dist}[u] = d$ instead; the discoveries of a level with code 255 write the code 0.
+Codes fit in a byte, so once the plans have handed out code 255, later bottom-up levels get the code 0, which is the code of a vertex without one, and test $\mathit{dist}[u] = d$ instead (\textsc{InFrontier} in Algorithm~\ref{alg:codes}); the discoveries of a level with code 255 or 0 write the code 0 (\textsc{NextCode}). A test of code 0 would be wrong: an undiscovered vertex, which has code 0, would count as a vertex of the frontier.
 
 \subsection{Ending the Search}
 \label{sec:do-end}

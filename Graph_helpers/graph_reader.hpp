@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <fcntl.h>
 #include <memory>
@@ -460,6 +461,22 @@ inline edge_list read_graph(const std::string& path) {
         "Unknown graph file \"" + file + "\"; expected liveJournal1.edges, "
         "road-road-usa.mtx, uk-2002.mtx, twitter-2010.txt, kron-25.edges or "
         "urand-25.edges");
+}
+
+// the vertex every search starts from: BFS_SOURCE if it is set, and 0 otherwise,
+// so that all the programs search from the same vertex. Anything but a vertex
+// of the graph is an error, since a run from a misread vertex would be wrong
+inline int search_source(std::size_t n) {
+    const char* text = std::getenv("BFS_SOURCE");
+    if(text == nullptr || *text == '\0') return 0;
+    char* end = nullptr;
+    errno = 0;
+    long long value = std::strtoll(text, &end, 10);
+    if(errno != 0 || *end != '\0' || value < 0 || static_cast<unsigned long long>(value) >= n) {
+        throw std::invalid_argument(
+            "BFS_SOURCE must be a vertex, from 0 to " + std::to_string(n - 1));
+    }
+    return static_cast<int>(value);
 }
 
 // the symmetric CSR the searches use: vertex u's neighbors are adj[offsets[u]]

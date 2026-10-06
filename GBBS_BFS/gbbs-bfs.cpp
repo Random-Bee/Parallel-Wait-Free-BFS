@@ -1339,8 +1339,10 @@ int num_t;
     }
 
     unique_ptr<gbbs_graph> g;
+    gbbs::uintE source = 0;
     try {
         g = load_graph(argv[1]);
+        source = static_cast<gbbs::uintE>(graph_helpers::search_source(g->num_vertices()));
     }
     catch(const exception& error) {
         cerr << "Error: " << error.what() << "\n";
@@ -1389,7 +1391,7 @@ int num_t;
 
             for(int i=0; i<repetitions; i++) {
                 high_resolution_clock::time_point t1 = high_resolution_clock::now();
-                gbbs::sequence<gbbs::uintE> result = gbbs::BFS(*g, 0);
+                gbbs::sequence<gbbs::uintE> result = gbbs::BFS(*g, source);
                 high_resolution_clock::time_point t2 = high_resolution_clock::now();
 
                 total_duration += duration_cast<microseconds>(t2 - t1).count();

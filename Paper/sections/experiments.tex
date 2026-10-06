@@ -1,7 +1,7 @@
 \section{Experiments}
 \label{sec:experiments}
 
-We compare our method with three of the fastest BFS implementations for shared memory, GAPBS, GBBS and PASGAL, on five graphs, first as they are (Section~\ref{sec:exp-speed}) and then with threads stalled on purpose (Section~\ref{sec:exp-stalls}). We call the method of Section~\ref{sec:dir-opt} \wfdo, and the variant of Section~\ref{sec:variants} \wfdomem.
+We compare our method with three of the fastest BFS implementations for shared memory, GAPBS, GBBS and PASGAL, on five graphs, first as they are (Section~\ref{sec:exp-speed}) and then with threads stalled on purpose (Section~\ref{sec:exp-stalls}), and we measure what helping contributes to both (Section~\ref{sec:exp-helping}). We call the method of Section~\ref{sec:dir-opt} \wfdo, and the variant of Section~\ref{sec:variants} \wfdomem.
 
 \subsection{Setup}
 \label{sec:exp-setup}
@@ -27,7 +27,7 @@ We compare our method with three of the fastest BFS implementations for shared m
 
 \paragraph{Graphs.} Table~\ref{tab:graphs} lists the graphs: the social networks LiveJournal and Twitter, the web graph uk-2002, the road network of the USA, and a Kronecker graph with $2^{25}$ vertices that the generator of GAPBS builds with its default of 16 edges per vertex, using the parameters of Graph500. All but the road network have low diameter, and a search of them takes 8 to 29 levels; a search of the road network takes 6,262.
 
-\paragraph{Method.} Where a program's code lands in memory changes its times by up to 5\%. We therefore build every program five times, with its code shifted by 0 to 256 bytes in steps of 64, and report for every point the median of the five builds. A build loads its graph once, and then, for each thread count in turn, rests for about three seconds, pins each thread to an idle CPU of its own, and runs 20 searches from vertex 0, whose average is the build's time for that count. We use two placements. On \emph{one socket}, threads and memory are on the first socket, and we run 1 to 56 threads; at 64, the threads take every core of the socket, and the times become too noisy to compare (Section~\ref{sec:exp-speed}). On \emph{two sockets}, threads are split evenly between the sockets, each still pinned to a CPU, and memory is interleaved over both; we run 1 to 96 threads. On two sockets, a build option makes the helpers of our methods take the owners on their own socket before those on the other; on one socket, they take them round-robin, as in Section~\ref{sec:wf-topdown}. Every measurement gave the distances of a sequential BFS.
+\paragraph{Method.} Where a program's code lands in memory changes its times by up to 5\%. We therefore build every program five times, with its code shifted by 0 to 256 bytes in steps of 64, and report for every point the median of the five builds. A build loads its graph once, and then, for each thread count in turn, rests for about three seconds, pins each thread to an idle CPU of its own, and runs 20 searches from vertex 0, whose average is the build's time for that count; Section~\ref{sec:exp-roots} uses other roots. We use two placements. On \emph{one socket}, threads and memory are on the first socket, and we run 1 to 56 threads; at 64, the threads take every core of the socket, and the times become too noisy to compare (Section~\ref{sec:exp-speed}). On \emph{two sockets}, threads are split evenly between the sockets, each still pinned to a CPU, and memory is interleaved over both; we run 1 to 96 threads. On two sockets, a build option makes the helpers of our methods take the owners on their own socket before those on the other; on one socket, they take them round-robin, as in Section~\ref{sec:wf-topdown}. Every measurement gave the distances of a sequential BFS.
 
 \paragraph{Timing.} The threads of every program live across searches, so no search pays for starting them. For GAPBS and GBBS, the time of a search is that of a call of their BFS, which allocates and fills its output and returns after its last parallel loop has joined; PASGAL's BFS reuses arrays that it set up once. For our methods, a search starts when the main thread publishes it, includes the threads resetting their shares of the arrays, and ends when the first call returns, at which point the distances are final (Section~\ref{sec:bg-method}). In the runs of Section~\ref{sec:exp-stalls} without stalls, on LiveJournal with 16 threads, the last call returned within 2~$\mu$s of the first, under 0.02\% of a search.
 
@@ -59,6 +59,8 @@ We compare our method with three of the fastest BFS implementations for shared m
     gbbs/.style={orange!85!black, mark=diamond*},
     pasgal/.style={green!50!black, mark=pentagon*},
     seq/.style={black, densely dotted, no marks, line width=0.8pt},
+    nohelpstall/.style={violet, mark=o, densely dashed},
+    nohelp/.style={gray!70!black, mark=x, dashdotted},
 }
 
 % median ms per search, each with one decimal: Figure~\ref{fig:scaling} plots them and the appendix prints them verbatim
@@ -280,6 +282,29 @@ Table~\ref{tab:best} gives each program's best time, over all thread counts and 
 
 \paragraph{Noise.} We leave out 64 threads on one socket. With every core of the socket taken by a thread, the threads compete with the rest of the system for the cores, and most programs become slower and noisier than at 56 threads: GAPBS by 46 to 95\% on every graph, \wfdo by up to 33\%, and \wfdomem by up to 140\% on LiveJournal, whose five builds land near either 7 or 15~ms. At the points we report, the median spread between the fastest and the slowest build of a point is 1.9 to 2.8\% for our methods, GBBS and PASGAL, and 7.4\% for GAPBS.
 
+\subsection{Other Roots}
+\label{sec:exp-roots}
+
+\begin{table*}
+    \caption{Searches of LiveJournal and uk-2002 from 16 random roots, on one socket: each program's median time over the roots, in ms, with its fastest and slowest in parentheses.}
+    \label{tab:roots}
+    \small
+    \begin{tabular}{l r r r r r r}
+        \toprule
+        Graph & Threads & \wfdo & \wfdomem & GAPBS & GBBS & PASGAL \\
+        \midrule
+        LiveJournal & 16 & 13.4 (10.5--14.7) & 13.3 (10.5--14.9) & 14.5 (12.0--17.9) & 20.5 (15.9--31.5) & 35.1 (26.5--87.8) \\
+        & 56 & 6.5 (5.7--8.7) & 7.0 (5.9--9.1) & 16.7 (12.6--25.5) & 9.4 (7.8--14.4) & 15.7 (10.6--29.8) \\
+        uk-2002 & 16 & 62.8 (52.6--85.9) & 62.5 (52.5--86.7) & 80.4 (66.6--94.9) & 90.7 (74.1--125.1) & 144.9 (125.8--324.8) \\
+        & 56 & 28.1 (24.6--37.9) & 28.5 (24.5--36.2) & 47.9 (39.2--63.3) & 44.0 (38.6--79.9) & 50.4 (44.4--108.7) \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
+The searches above start from vertex 0. To see how much the root matters, we repeat the runs of LiveJournal and uk-2002 from 16 other roots, at 16 and 56 threads on one socket. The roots are drawn uniformly at random, with a fixed seed, among the vertices whose search reaches at least half of the graph. All the roots of a graph reach the same vertices, 99.9\% of those of LiveJournal and 99.7\% of those of uk-2002, in 13 to 15 levels on LiveJournal, against 12 from vertex 0, and in 27 to 30 on uk-2002, against 29. Each program is built once, with its code unshifted, and runs 20 searches from each root, with the programs taking turns from root to root; every run gave the distances of a sequential BFS from its root. Table~\ref{tab:roots} gives the results.
+
+The time of \wfdo varies by 1.39 to 1.63$\times$ from root to root, and those of the other programs by as much or more, but \wfdo stays ahead: it is faster than GAPBS, GBBS and PASGAL from every root, on both graphs and at both thread counts. Against the fastest of the three from each root, which is almost always GAPBS at 16 threads, and GBBS or GAPBS at 56, \wfdo is 1.10 and 1.50$\times$ faster in the median on LiveJournal at 16 and 56 threads, and 1.19 and 1.49$\times$ faster on uk-2002, and never less than 1.01$\times$ faster. Vertex 0 lies within the range of the other roots: from it, the fastest of the three takes 1.28, 1.26, 1.15 and 1.44$\times$ as long as \wfdo in the same four settings. \wfdomem takes about as long as \wfdo from every root: the median ratio of the two is 1.00 to 1.02, and the ratio stays within 7\% except on LiveJournal at 56 threads, where a search takes 6 to 9~ms and the ratio ranges from 0.76 to 1.47.
+
 \subsection{The Road Network}
 \label{sec:exp-road}
 
@@ -308,6 +333,36 @@ Table~\ref{tab:best} gives each program's best time, over all thread counts and 
 A search of the road network has 6,262 levels of about 3,800 vertices each, so at 56 threads a thread owns about 70 vertices of a level, and the work of a level is small next to the cost of sharing it: helping owners that are still busy with their buckets, visiting the $T$ entries of the level's node, and planning the level. Table~\ref{tab:road} breaks the time of a level into these parts. On one socket, the time that a thread spends on its own bucket falls from 20.0~$\mu$s at 8 threads to 6.4~$\mu$s at 56, while helping grows from 4.9 to 12.5~$\mu$s, and visiting entries and planning together from 1.2 to 5.9~$\mu$s; past 24 threads, these costs grow faster than a thread's own share of the work shrinks, and a level takes longer. They come mostly from reading cache lines that another core has just written: of the loads that another core's cache serves, about 40\% read $\mathit{dist}$, in the scans for undiscovered neighbors, and about a third read $\mathit{vis}$. On two sockets, over half of these transfers cross between the sockets, 40 to 43\% of the loads from memory go to the other socket, and a level takes about twice as long as on one socket from 8 threads on. PASGAL keeps scaling on the road network because each of its tasks explores up to 128 vertices from a local queue before it synchronizes, so that one of its rounds can cover several levels~\cite{pasgal, vgc_hashbag}. Helpers that take the owners on their own socket first (Section~\ref{sec:exp-setup}) lower the best two-socket time on the road network by 35\% for \wfdo and by 37\% for \wfdomem, in runs that alternate with the round-robin order, which Table~\ref{tab:road} profiles.
 
 On the road network, the method of Section~\ref{sec:wf-topdown}, which expands every level top-down, is the fastest of all the programs: its best time is 94.2~ms, at 24 threads on one socket, 1.39$\times$ below that of \wfdo and 1.37$\times$ below that of PASGAL. A search of the road network is top-down at all but a few of its levels, so \wfdo gains little there from going bottom-up, while its top-down levels do more than those of the method of Section~\ref{sec:wf-topdown}: they are planned, they discover vertices with a CAS, and they count the edges of the vertices that they discover (Section~\ref{sec:do-plan}). Planning alone takes about 1.1~$\mu$s of a level at 24 threads (Table~\ref{tab:road}), or about 7~ms of a search.
+
+\subsection{Memory}
+\label{sec:exp-memory}
+
+\begin{table}
+    \caption{The memory of \wfdo and \wfdomem, from vertex 0 on one socket, in MB: the most that a search takes from the arenas, and how much the resident size of the process grows over 20 searches. The graph itself takes 0.59~GB for LiveJournal, 2.53~GB for uk-2002 and 0.42~GB for Road-USA, and with the per-vertex arrays and the rest of the process, the resident size before the searches is 0.67, 2.75 and 0.67~GB.}
+    \label{tab:memory}
+    \small
+    \begin{tabular}{l r r r r r}
+        \toprule
+        & & \multicolumn{2}{c}{\wfdo} & \multicolumn{2}{c}{\wfdomem} \\
+        \cmidrule(lr){3-4} \cmidrule(lr){5-6}
+        Graph & Threads & Search & Resident & Search & Resident \\
+        \midrule
+        LiveJournal & 1 & 39.8 & 22.0 & 38.1 & 17.9 \\
+        & 16 & 39.8 & 31.4 & 38.0 & 33.3 \\
+        & 56 & 41.3 & 49.5 & 37.9 & 36.5 \\
+        uk-2002 & 1 & 250.0 & 87.8 & 172.6 & 51.4 \\
+        & 16 & 247.9 & 401.0 & 172.3 & 63.6 \\
+        & 56 & 245.0 & 191.5 & 171.9 & 174.6 \\
+        Road-USA & 1 & 265.0 & 255.0 & 0.3 & 0.1 \\
+        & 16 & 277.3 & 264.5 & 0.3 & 5.9 \\
+        & 56 & 299.6 & 334.6 & 0.4 & 8.5 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Table~\ref{tab:memory} gives the memory of our two methods on LiveJournal, uk-2002 and the road network. We count the bytes that the arenas hand out in a search, which hold all that a search of \wfdo allocates, its levels and its bucket arrays, and the bucket arrays of \wfdomem, whose two nodes take under 0.1~MB more; nothing is freed during a search, so a search holds the most at its end. We also measure how much the resident size of the process grows over the 20 searches of a thread count, from its size once the graph and the per-vertex arrays are loaded, which is the same for both methods. The resident size counts only memory that has been written, and the arenas keep their memory from one search to the next, so it can be smaller or larger than what one search takes. For comparison, the graph itself, with eight bytes per vertex for its offsets and four for each end of an edge, takes 0.59~GB for LiveJournal, 2.53~GB for uk-2002 and 0.42~GB for the road network.
+
+On the road network, a search of \wfdo takes 265 to 300~MB, 63 to 71\% of what the graph takes, and the resident size grows by 255 to 335~MB. \wfdomem takes 0.26 to 0.44~MB, 0.1\% of the graph and 700 to 1,000 times less than \wfdo, since a bucket only ever holds the vertices of one level, a few thousand on the road network, and the resident size grows by at most 8.5~MB. On LiveJournal, the two take 38 to 41~MB, about 7\% of the graph and within 10\% of each other, as Section~\ref{sec:mem-memory} expects for a low-diameter graph, whose largest levels hold most of its vertices. uk-2002, with 29 levels, lies in between: \wfdomem takes 172~MB and \wfdo 245 to 250~MB, 7 and 10\% of the graph. At 16 threads on uk-2002, the resident size of \wfdo grows by more than a search takes, since its arenas keep their chunks from search to search, and a search whose large arrays do not fit in the chunks that an arena has takes new ones.
 
 \subsection{Stalled Threads}
 \label{sec:exp-stalls}
@@ -387,6 +442,69 @@ us wd mem gapbs gbbs pasgal
 
 \paragraph{Number of stalled threads.} Figure~\ref{fig:stall-count} stalls from 0 to 15 of the 16 threads, each for 1~ms per level or round. One stalled thread raises the time of GAPBS from 14.2 to 22.7~ms, since every step waits for it at the barrier, and more stalled threads add little, up to 25.5~ms with 15. GBBS and PASGAL rise more slowly, from 17.0 to 24.7~ms and from 29.1 to 35.4~ms, since a stalled worker delays a round only when it holds part of it. \wfdo rises from 11.0 to 12.9~ms with 4 stalled threads, and to 18.4~ms with 15: the threads that are not stalled take over the work of those that are, and only once most threads stall do the few left carry the first millisecond of every level alone. With threads stalled, \wfdo is 1.4 to 2.0$\times$ faster than GAPBS.
 
-\paragraph{Length of a stall.} Figure~\ref{fig:stall-length} stalls one thread for 10~$\mu$s to 10~ms per level or round. Stalls of up to 100~$\mu$s change no program by more than 5\%. Beyond that, the time of GAPBS grows by about one stall per step, to 128.9~ms at 10~ms, 9.0$\times$ its time without stalls, and GBBS and PASGAL grow to 72.0 and 82.6~ms, 4.2 and 2.8$\times$ theirs. \wfdo stays between 10.9 and 12.8~ms at every length; at 10~ms it takes 16\% longer than without stalls, and is 10.2$\times$ faster than GAPBS, 5.7$\times$ faster than GBBS and 6.6$\times$ faster than PASGAL. \wfdomem behaves the same, within 0.8~ms of \wfdo in both experiments.
+\paragraph{Length of a stall.} Figure~\ref{fig:stall-length} stalls one thread for 10~$\mu$s to 10~ms per level or round. Stalls of up to 100~$\mu$s change no program by more than 5\%. Beyond that, the time of GAPBS grows by about one stall per step, to 128.9~ms at 10~ms, 9.0$\times$ its time without stalls, and GBBS and PASGAL grow to 72.0 and 82.6~ms, 4.2 and 2.8$\times$ theirs. \wfdo stays between 10.9 and 12.8~ms at every length; at 10~ms it takes 16\% longer than without stalls, and is 10.2$\times$ faster than GAPBS, 5.7$\times$ faster than GBBS and 6.6$\times$ faster than PASGAL. \wfdomem behaves the same, within 0.8~ms of \wfdo in both experiments. Section~\ref{sec:exp-helping} measures how much of this comes from helping.
 
-The stalled threads themselves return late. With 10~ms stalls, the stalled thread of \wfdo returns 130.7~ms after the search starts, since it stalls again at every level it walks through, even one that is over, while the stragglers of \wfdomem skip the levels that are over (Section~\ref{sec:mem-reuse}) and return after 40.7~ms. Neither delays the result, which is final once the first call returns (Section~\ref{sec:bg-method}).
+The stalled threads themselves return late. With 10~ms stalls, the stalled thread of \wfdo returns 130.7~ms after the search starts, since it stalls again at every level it walks through, even one that is over, while the stragglers of \wfdomem skip the levels that are over (Section~\ref{sec:mem-reuse}) and return after 40.7~ms. Neither delays the result, which is final once the first call returns (Section~\ref{sec:bg-method}). Until it returns, a stalled thread is not free for other work, and no later search may reuse the state of its search; but the threads that have returned are free to use the result, or to start another search with state of its own.
+
+\subsection{What Helping Does}
+\label{sec:exp-helping}
+
+To see what helping contributes to these results, and to the speed of \wfdo without stalls, we repeat the experiment of Figure~\ref{fig:stall-length} with two variants of \wfdo that wait instead of helping, and with a build of \wfdo that counts the work that each thread does for its own share and for the shares of others. In the first variant, a thread that has finished its own share of a part of a level, which is its bucket, its blocks or the codes of its bucket, waits for every other owner to finish theirs, as at a barrier. In the second, threads help each other as in \wfdo, but wait for the stalled thread instead of helping it. Neither variant is wait-free. Counting makes \wfdo up to 3\% slower, so we use only the counts of that build. Each point is again the median of five runs of 20 searches, with the programs taking turns, and every run gave correct distances.
+
+\pgfplotstableread{
+us wd nohelpstall nohelp
+10 10.8 11.3 27.3
+20 10.9 11.0 27.4
+50 11.0 11.3 27.6
+100 10.9 11.5 28.2
+200 11.1 12.1 29.0
+500 11.1 14.3 30.7
+1000 11.6 19.1 34.3
+2000 11.8 30.3 41.5
+5000 12.3 63.5 64.7
+10000 12.5 118.6 118.7
+}\dataHelping
+
+\begin{figure}
+    \centering
+    \begin{tikzpicture}
+    \begin{axis}[stalls, xlabel={Stall per level ($\mu$s), one thread of 16}, xmode=log, ymode=log,
+        xtick={10,100,1000,10000}, xticklabels={10,100,1000,10000},
+        ytick={10,20,50,100}, yticklabels={10,20,50,100}, ymin=8, ymax=160, legend columns=3]
+    \addplot[wfdo] table[x=us, y=wd] {\dataHelping};
+    \addplot[nohelpstall] table[x=us, y=nohelpstall] {\dataHelping};
+    \addplot[nohelp] table[x=us, y=nohelp] {\dataHelping};
+    \legend{\wfdo, Waits for the stalled thread, Never helps}
+    \end{axis}
+    \end{tikzpicture}
+    \caption{Median time per search on LiveJournal with 16 threads on one socket, against how long one thread stalls at the start of every level, for \wfdo and two variants of it: one that helps every thread but the stalled one, for which it waits, and one that never helps, and waits for every owner at the end of each part of a level. Both axes are logarithmic; without stalls, the three take 11.0, 11.5 and 27.1~ms.}
+    \Description{Search time against the length of the stall of one thread: WF-DO stays flat, the variant that waits for the stalled thread grows with the stall from about 500 microseconds on, and the variant that never helps is more than twice as slow throughout and grows the same way.}
+    \label{fig:helping}
+\end{figure}
+
+\begin{table}
+    \caption{The work that helpers do in \wfdo on LiveJournal with 16 threads on one socket, one of which stalls at the start of every level, in percent: their share of the vertices expanded and of the neighbors examined in top-down levels, of the blocks scanned in bottom-up levels, and of the blocks of the stalled thread; and the share of the neighbors examined, and of the blocks scanned, in work that another thread was doing at the same time.}
+    \label{tab:helping}
+    \small
+    \setlength{\tabcolsep}{4pt}
+    \begin{tabular}{r r r r r r r}
+        \toprule
+        & \multicolumn{4}{c}{Done by helpers} & \multicolumn{2}{c}{Repeated} \\
+        \cmidrule(lr){2-5} \cmidrule(lr){6-7}
+        Stall & Vertices & Neighbors & Blocks & Stalled & Neighbors & Blocks \\
+        \midrule
+        0 & 4.5 & 41.2 & 1.8 & 0.1 & 13.5 & 1.3 \\
+        100~$\mu$s & 6.0 & 40.5 & 2.0 & 4.8 & 12.8 & 1.4 \\
+        500~$\mu$s & 5.2 & 40.2 & 4.6 & 41.4 & 12.7 & 2.0 \\
+        1~ms & 5.3 & 39.2 & 5.7 & 57.0 & 12.6 & 2.3 \\
+        2~ms & 5.2 & 39.2 & 8.8 & 96.4 & 12.7 & 2.5 \\
+        10~ms & 5.2 & 40.2 & 9.0 & 100.0 & 12.9 & 2.5 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\paragraph{Without stalls.} The variant that never helps takes 27.1~ms, 2.5$\times$ the 11.0~ms of \wfdo (Figure~\ref{fig:helping}). A thread appends what it discovers to its own bucket, so without helping, the thread that owns the source expands the first levels alone, and the work spreads over the threads only once a bottom-up level hands out blocks. Helping is thus what balances the top-down levels of \wfdo, and Table~\ref{tab:helping} shows how much of their work helpers do. They expand only 4.5\% of the vertices, but examine 41\% of the neighbors, since helping happens where a bucket takes long: the vertices that helpers expand have about 15 times as many neighbors as those that owners expand. In bottom-up levels, whose blocks are spread over the threads from the start, helpers scan 1.8\% of the blocks. Helping repeats some work. Only 0.85\% of the expansions in top-down levels are of a vertex that another thread is expanding at the same time, but since these are mostly vertices of high degree, they examine 13\% of all the neighbors; and 1.3\% of the blocks are scanned twice.
+
+\paragraph{With a stall.} The second variant shows what helping saves when a thread stalls. Waiting for the stalled thread makes every level last at least as long as the stall: at 10~ms, the variant takes 118.6~ms, about one stall for each of the 12 levels, against 12.5~ms for \wfdo. Helping thus saves 106~ms of every search at 10~ms, 89\% of the time without it, 7.5~ms or 39\% at 1~ms, and 0.6~ms at 100~$\mu$s; even without a stall, not helping that one thread costs 0.6~ms, the time that the others wait for its share. Table~\ref{tab:helping} shows how helpers take this share over. They scan 5\% of the blocks of the stalled thread with stalls of 100~$\mu$s, 57\% with stalls of 1~ms, and all of them from 5~ms on, while from 1~ms on, the stalled thread has nothing to expand in top-down levels: it reaches every level late, so the others discover every vertex, and its buckets stay empty. Repeated work grows only in bottom-up levels, to 2.5\% of the blocks scanned, since helpers that take the blocks of the stalled thread, each in a random order of its own, sometimes scan the same one.
+
+Helping thus does two things for \wfdo. Without stalls, it balances the top-down levels, whose vertices sit in the buckets of the threads that discovered them; with a stall, it takes over the share of the stalled thread, so that the others go on without waiting. Both repeat some work, in top-down levels mostly on vertices of high degree, which costs far less than the waiting it replaces.

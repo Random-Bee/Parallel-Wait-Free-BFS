@@ -30,7 +30,9 @@ set -euo pipefail
 # same way, wdsock and memsock are wf-dir.cpp and wf-dir-mem.cpp built with
 # -DSAME_SOCKET_FIRST on either placement, and wdrr and memrr their copies
 # from before that build existed, WF_BFS/tmp/wf-dir-rr.cpp and
-# wf-dir-mem-rr.cpp, whose helpers visit all owners round-robin.
+# wf-dir-mem-rr.cpp, whose helpers visit all owners round-robin. wdatomic is
+# WF_BFS/tmp/wf-dir-atomic.cpp, wf-dir.cpp with every access that threads share
+# made a relaxed atomic one, run as wd is on each placement.
 #
 # Usage: ./benchmark.sh [placements] [graphs], e.g. ./benchmark.sh node0 "lj uk";
 # both placements and all five graphs by default; PROGRAMS="wfbfs" limits it to
@@ -100,7 +102,7 @@ for placement in $placements; do
 done
 for name in "${programs[@]}"; do
     case $name in
-        wd|mem|wfbfs|gapbs|pasgal|gbbs|seq|wdnow|nocode|wdsock|memsock|wdrr|memrr) ;;
+        wd|mem|wfbfs|gapbs|pasgal|gbbs|seq|wdnow|nocode|wdsock|memsock|wdrr|memrr|wdatomic) ;;
         *) echo "unknown program $name" >&2; exit 1 ;;
     esac
 done
@@ -174,6 +176,11 @@ build_program() {
                 "$root/WF_BFS/tmp/wf-dir-nocode.cpp" -o "$binary" ;;
         wdrr) "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -pthread -I "$root/WF_DO_BFS" \
                 "$root/WF_BFS/tmp/wf-dir-rr.cpp" -o "$binary" ;;
+        wdatomic) "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -pthread -I "$root/WF_DO_BFS" \
+                "$root/WF_BFS/tmp/wf-dir-atomic.cpp" -o "$binary"
+            "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -DSAME_SOCKET_FIRST -pthread \
+                -I "$root/WF_DO_BFS" "$root/WF_BFS/tmp/wf-dir-atomic.cpp" \
+                -o "$build/$name-sock-$shift.out" ;;
         mem) "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -pthread \
                 "$root/WF_DO_BFS/wf-dir-mem.cpp" -o "$binary"
             "$cxx" "${flags[@]}" -DTEXT_SHIFT=$shift -DSAME_SOCKET_FIRST -pthread \
@@ -243,7 +250,7 @@ for run in "${pending[@]}"; do
     fi
     binary="$build/$name-$shift.out"
     case $name in
-        wd|wdnow|mem) if [ "$placement" = both ]; then binary="$build/$name-sock-$shift.out"; fi ;;
+        wd|wdnow|mem|wdatomic) if [ "$placement" = both ]; then binary="$build/$name-sock-$shift.out"; fi ;;
     esac
     rm -f -- "$output"
     status=0

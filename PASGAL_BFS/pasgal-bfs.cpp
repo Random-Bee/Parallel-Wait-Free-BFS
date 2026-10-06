@@ -695,8 +695,10 @@ int num_t;
     }
 
     std::unique_ptr<pasgal_graph> g;
+    uint32_t source = 0;
     try {
         g = load_graph(argv[1]);
+        source = static_cast<uint32_t>(graph_helpers::search_source(g->n));
     }
     catch(const std::exception& error) {
         cerr << "Error: " << error.what() << "\n";
@@ -749,7 +751,7 @@ int num_t;
 
             for(int i=0; i<repetitions; i++) {
                 auto t1 = std::chrono::high_resolution_clock::now();
-                result = &solver.bfs(0);
+                result = &solver.bfs(source);
                 auto t2 = std::chrono::high_resolution_clock::now();
 
                 total_duration += std::chrono::duration_cast<std::chrono::microseconds>(

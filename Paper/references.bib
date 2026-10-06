@@ -211,14 +211,15 @@
 
 @inproceedings{mizell_bfs,
     author = {Mizell, David and Maschhoff, Kristyn},
+    title = {Early Experiences with Large-Scale {Cray XMT} Systems},
+    booktitle = {2009 IEEE International Symposium on Parallel \& Distributed Processing},
     year = {2009},
-    month = {05},
-    pages = {1-9},
-    title = {Early Experiences with Large-Scale Cray XMT Systems},
+    month = may,
+    pages = {1--9},
     doi = {10.1109/IPDPS.2009.5161108}
 }
 
-@inproceedings{xia_bfs,
+@inproceedings{buluc_madduri_bfs,
     author = {Bulu\c{c}, Aydin and Madduri, Kamesh},
     title = {Parallel breadth-first search on distributed memory systems},
     year = {2011},
@@ -248,23 +249,23 @@
     doi = {10.1145/1810479.1810534}
 }
 
-@inproceedings{aditya_bfs,
-    author = {Aditya Nongmeikapam},
-    year = {},
-    month = {},
-    pages = {},
-    title = {Paralle Breadth-First Search Using MPI},
-    doi = {}
+@misc{aditya_bfs,
+    author = {Nongmeikapam, Aditya},
+    title = {Parallel Breadth-First Search Using {MPI}},
+    year = {2022},
+    howpublished = {Course presentation, CSE633: Parallel Computing, University at Buffalo, Spring 2022},
+    url = {https://www.cse.buffalo.edu/faculty/miller/Courses/CSE633/Aditya-Nongmeikapam-Spring-2022.pdf}
 }
 
 @article{scarpazza_bfs,
-    author = {Scarpazza, Daniele and Villa, Oreste and Petrini, Fabrizio},
-    year = {2008},
-    month = {11},
-    pages = {1381-1395},
-    title = {Efficient Breadth-First Search on the Cell/BE Processor},
+    author = {Scarpazza, Daniele Paolo and Villa, Oreste and Petrini, Fabrizio},
+    title = {Efficient Breadth-First Search on the {Cell/BE} Processor},
+    journal = {IEEE Transactions on Parallel and Distributed Systems},
     volume = {19},
-    journal = {Parallel and Distributed Systems, IEEE Transactions on},
+    number = {10},
+    pages = {1381--1395},
+    year = {2008},
+    month = oct,
     doi = {10.1109/TPDS.2007.70811}
 }
 
@@ -295,20 +296,14 @@
     doi={10.1109/SC.2010.26}
 }
 
-@article{edmond_bfs,
+@inproceedings{edmond_bfs,
     author = {Edmonds, Nicholas and Willcock, Jeremiah and Lumsdaine, Andrew and Hoefler, Torsten},
+    title = {Design of a Large-Scale Hybrid-Parallel Graph Library},
+    booktitle = {International Conference on High Performance Computing, Student Research Symposium},
     year = {2010},
-    month = {01},
-    pages = {},
-    title = {Design of a Large-Scale Hybrid-Parallel Graph Library}
-}
-
-@inproceedings{sinaweibo,
-    title = {The Network Data Repository with Interactive Graph Analytics and Visualization},
-    author={Ryan A. Rossi and Nesreen K. Ahmed},
-    booktitle = {AAAI},
-    url={https://networkrepository.com},
-    year={2015}
+    month = dec,
+    location = {Goa, India},
+    url = {https://htor.inf.ethz.ch/publications/?bibtex=119}
 }
 
 @misc{livejournal,
@@ -321,25 +316,19 @@
 
 @misc{intelmanual,
   author       = {{Intel Corporation}},
-  title        = {Intel\textsuperscript{\textregistered} 64 and IA-32 Architectures Software Developer's Manual, Volume 3: System Programming Guide},
-  howpublished = {\url{https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-system-programming-manual-325384.pdf}},
-  year         = {2022}
+  title        = {Intel\textsuperscript{\textregistered} 64 and IA-32 Architectures Software Developer's Manual, Volume 3 (3A, 3B, 3C \& 3D): System Programming Guide},
+  howpublished = {Order Number 325384-078US, December 2022},
+  month        = dec,
+  year         = {2022},
+  url          = {https://cdrdv2-public.intel.com/671447/325384-sdm-vol-3abcd.pdf}
 }
 
 @misc{amdmanual,
   author       = {{Advanced Micro Devices, Inc.}},
-  title        = {AMD64 Architecture Programmer's Manual, Volume 2: System Programming},
-  howpublished = {\url{https://www.amd.com/content/dam/amd/en/documents/processor-tech-docs/programmer-references/24593.pdf}},
+  title        = {{AMD64} Architecture Programmer's Manual, Volume 2: System Programming},
+  howpublished = {Publication No. 24593, Revision 3.39, October 2022},
+  month        = oct,
   year         = {2022}
-}
-
-@misc{challenges1,
-  title        = {Implementing a Parallel Breadth-First Search in C for Large Graphs Using Multiple Memory Banks},
-  author       = {{IT trip}},
-  year         = {2025},
-  month        = {January},
-  url          = {https://en.ittrip.xyz/c-language/c-hpc-parallel-bfs},
-  note         = {Accessed: 2025-04-29}
 }
 
 @article{challenges2,
@@ -505,6 +494,32 @@ edition = {1st}
     url = {https://hdl.handle.net/20.500.12380/310782}
 }
 
+@inproceedings{michael_iws,
+    author = {Michael, Maged M. and Vechev, Martin T. and Saraswat, Vijay A.},
+    title = {Idempotent Work Stealing},
+    booktitle = {Proceedings of the 14th ACM SIGPLAN Symposium on Principles and Practice of Parallel Programming},
+    series = {PPoPP '09},
+    year = {2009},
+    pages = {45--54},
+    publisher = {ACM},
+    address = {New York, NY, USA},
+    location = {Raleigh, NC, USA},
+    doi = {10.1145/1504176.1504186}
+}
+
+@inproceedings{pearce_async,
+    author = {Pearce, Roger A. and Gokhale, Maya B. and Amato, Nancy M.},
+    title = {Multithreaded Asynchronous Graph Traversal for In-Memory and Semi-External Memory},
+    booktitle = {Proceedings of the 2010 ACM/IEEE International Conference for High Performance Computing, Networking, Storage and Analysis},
+    series = {SC '10},
+    year = {2010},
+    pages = {1--11},
+    publisher = {IEEE},
+    address = {Piscataway, NJ, USA},
+    location = {New Orleans, LA, USA},
+    doi = {10.1109/SC.2010.34}
+}
+
 @inproceedings{kwak_twitter,
     author = {Kwak, Haewoon and Lee, Changhyun and Park, Hosung and Moon, Sue},
     title = {What is {Twitter}, a Social Network or a News Media?},
@@ -549,6 +564,7 @@ edition = {1st}
     booktitle = {Proceedings of the 29th AAAI Conference on Artificial Intelligence},
     series = {AAAI '15},
     year = {2015},
+    doi = {10.1609/aaai.v29i1.9277},
     url = {https://networkrepository.com}
 }
 
@@ -561,6 +577,28 @@ edition = {1st}
     year = {2010},
     pages = {89--97},
     doi = {10.1145/1785414.1785443}
+}
+
+@inproceedings{boehm_cpp,
+    author = {Boehm, Hans-J. and Adve, Sarita V.},
+    title = {Foundations of the {C++} Concurrency Memory Model},
+    booktitle = {Proceedings of the 29th ACM SIGPLAN Conference on Programming Language Design and Implementation},
+    series = {PLDI '08},
+    year = {2008},
+    pages = {68--78},
+    publisher = {ACM},
+    address = {New York, NY, USA},
+    doi = {10.1145/1375581.1375591}
+}
+
+@inproceedings{boehm_benign,
+    author = {Boehm, Hans-J.},
+    title = {How to Miscompile Programs with ``Benign'' Data Races},
+    booktitle = {Proceedings of the 3rd USENIX Workshop on Hot Topics in Parallelism},
+    series = {HotPar '11},
+    year = {2011},
+    publisher = {USENIX Association},
+    address = {Berkeley, CA, USA}
 }
 
 @article{herlihy_waitfree,

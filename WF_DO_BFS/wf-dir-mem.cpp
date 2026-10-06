@@ -7,6 +7,8 @@ using namespace chrono;
 
 int N;
 size_t M;
+// the vertex every search starts from (see graph_helpers::search_source)
+int source = 0;
 // vertex u's neighbors are adj[offsets[u]] up to, not including, adj[offsets[u+1]]
 graph_helpers::array<size_t> offsets;
 graph_helpers::array<int> adj;
@@ -32,9 +34,22 @@ vector<uint8_t> dist8;
 int num_t;
 
 // keeps the compiler from moving memory accesses across this point; x86 itself
-// keeps stores in order and loads in order (SDM Vol. 3A, 8.2.2)
+// keeps stores in order and loads in order (SDM Vol. 3A, 9.2.2, December 2022)
 [[gnu::always_inline]] inline void compiler_barrier() {
     asm volatile("" ::: "memory");
+}
+
+// every access to a location that another thread may use at the same time,
+// with one of them writing, is a relaxed atomic one; the barriers keep their
+// order
+template <class T>
+[[gnu::always_inline]] inline T shared_load(const T& object) {
+    return atomic_ref<T>(const_cast<T&>(object)).load(memory_order_relaxed);
+}
+
+template <class T>
+[[gnu::always_inline]] inline void shared_store(T& object, T value) {
+    atomic_ref<T>(object).store(value, memory_order_relaxed);
 }
 
 // the memory one thread hands out during a search: its buckets' arrays. A block
@@ -54,7 +69,7 @@ class alignas(128) arena {
     arena(const arena&) = delete;
     arena& operator=(const arena&) = delete;
     ~arena() {
-        for(chunk& c: chunks) ::operator delete(c.begin);
+        for(chunk& c: chunks) std::free(c.begin);
     }
 
     void* allocate(size_t bytes) {
@@ -99,7 +114,12 @@ class alignas(128) arena {
         }
         if(current == chunks.size()) {
             size_t size = max(chunk_bytes, bytes + block_alignment);
-            chunks.push_back({static_cast<char*>(::operator new(size)), size});
+            // zeroed: a slow reader of a reused bucket can read entries that no
+            // thread has written in this search (see at_level), and C++ leaves
+            // memory that was never written without a value to read
+            char* memory = static_cast<char*>(std::calloc(size, 1));
+            if(memory == nullptr) throw std::bad_alloc();
+            chunks.push_back({memory, size});
         }
         next = chunks[current].begin;
         end = next + chunks[current].bytes;
@@ -142,20 +162,21 @@ class alignas(128) customList {
     // only the owner calls this, before its first push of the level; the array
     // is kept, and entries of the level two back are overwritten
     void begin_level(int new_level) {
-        size = 0;
-        degree_sum = 0;
+        shared_store(size, 0);
+        shared_store(degree_sum, 0LL);
         // readers check the level before reading the size
         compiler_barrier();
-        level = new_level;
+        shared_store(level, new_level);
     }
 
     // readers load size before list, so publish the array contents, then list,
     // then size; otherwise a reader can index past what it is able to see
     [[gnu::always_inline]] inline void push_back(int x) {
-        if(size == capacity) grow();
-        list[size] = x;
+        int s = shared_load(size);
+        if(s == capacity) grow();
+        shared_store(shared_load(list)[s], x);
         compiler_barrier();
-        size++;
+        shared_store(size, s + 1);
     }
 
     // an array smaller than an arena block would leave the rest of it unused
@@ -172,7 +193,7 @@ class alignas(128) customList {
             memory->allocate(sizeof(int) * static_cast<size_t>(wanted)));
         if(size > 0) std::copy(list, list+size, new_list);
         compiler_barrier();
-        list = new_list;
+        shared_store(list, new_list);
         capacity = wanted;
     }
 };
@@ -256,11 +277,11 @@ class outer_list_node {
     }
 
     void mark_done(int owner, int level) {
-        if(done[owner] < level) done[owner] = level;
+        if(shared_load(done[owner]) < level) shared_store(done[owner], level);
     }
 
     void mark_codes_done(int owner, int level) {
-        if(codes_done[owner] < level) codes_done[owner] = level;
+        if(shared_load(codes_done[owner]) < level) shared_store(codes_done[owner], level);
     }
 };
 
@@ -271,18 +292,18 @@ class outer_list_node {
 // a level only once its share of it is done
 [[gnu::always_inline]] inline int last_done_on(
         outer_list_node* curr, outer_list_node* next_node, int owner, int level) {
-    if(next_node->buckets[owner].level != level + 1) return -1;
+    if(shared_load(next_node->buckets[owner].level) != level + 1) return -1;
     compiler_barrier();
-    return curr->progress[owner].last_done;
+    return shared_load(curr->progress[owner].last_done);
 }
 
 // the last entry of its bucket whose code the owner wrote on this level, by the
 // same reasoning as last_done_on
 [[gnu::always_inline]] inline int codes_done_on(
         outer_list_node* curr, outer_list_node* next_node, int owner, int level) {
-    if(next_node->buckets[owner].level != level + 1) return -1;
+    if(shared_load(next_node->buckets[owner].level) != level + 1) return -1;
     compiler_barrier();
-    return curr->codes_progress[owner].last_done;
+    return shared_load(curr->codes_progress[owner].last_done);
 }
 
 // a vertex id read from another owner's bucket: the owner may already have
@@ -290,7 +311,7 @@ class outer_list_node {
 // level's entries, or past what the owner rewrote, memory never written in this
 // search. Only an id in range whose dist is the reader's level belongs to it
 [[gnu::always_inline]] inline bool at_level(int u, int level) {
-    return static_cast<unsigned>(u) < static_cast<unsigned>(N) && dist[u] == level;
+    return static_cast<unsigned>(u) < static_cast<unsigned>(N) && shared_load(dist[u]) == level;
 }
 
 struct affinePermutation {
@@ -392,13 +413,18 @@ constexpr int helper_block = 16;
         int v, customList& output_bucket, int next_distance, uint8_t next_code) {
     output_bucket.push_back(v);
     compiler_barrier();
-    dist8[v] = next_code;
+    shared_store(dist8[v], next_code);
     compiler_barrier();
-    dist[v] = next_distance;
+    shared_store(dist[v], next_distance);
 }
 
 [[gnu::always_inline]] inline long long degree(int v) {
     return offsets[v+1] - offsets[v];
+}
+
+// the owner's running sum, which planners read at the same time
+[[gnu::always_inline]] inline void add_degrees(customList& bucket, long long degrees) {
+    shared_store(bucket.degree_sum, shared_load(bucket.degree_sum) + degrees);
 }
 
 // pushed before marking, as in discover_vertex. Of the threads that push v,
@@ -408,8 +434,9 @@ constexpr int helper_block = 16;
 [[gnu::always_inline]] inline void discover_and_count(
         int v, customList& output_bucket, int next_distance) {
     output_bucket.push_back(v);
-    if(__sync_bool_compare_and_swap(&dist[v], -1, next_distance)) {
-        output_bucket.degree_sum += degree(v);
+    int expected = -1;
+    if(atomic_ref<int>(dist[v]).compare_exchange_strong(expected, next_distance)) {
+        add_degrees(output_bucket, degree(v));
     }
 }
 
@@ -419,7 +446,7 @@ void process_neighbors(
     size_t count = offsets[u+1] - offsets[u];
     for(size_t j=0; j<count; j++) {
         int v = neighbors[j];
-        if(dist[v] == -1) {
+        if(shared_load(dist[v]) == -1) {
             discover_and_count(v, output_bucket, next_distance);
         }
     }
@@ -449,7 +476,7 @@ void process_neighbors_shuffled(
         size_t end = min((block + 1)*helper_block, count);
         for(size_t j=block*helper_block; j<end; j++) {
             int v = neighbors[j];
-            if(dist[v] == -1) {
+            if(shared_load(dist[v]) == -1) {
                 discover_and_count(v, output_bucket, next_distance);
             }
         }
@@ -461,21 +488,21 @@ void process_own_bucket(
         outer_list_node* curr, outer_list_node* next_node,
         int level, int tid, int sz
     ) {
-    const int* bucket = curr->buckets[tid].list;
+    const int* bucket = shared_load(curr->buckets[tid].list);
     customList& output_bucket = next_node->buckets[tid];
     int& last_done = curr->progress[tid].last_done;
 
     for(int i=0; i<sz; i++) {
-        int u = bucket[i];
-        if(!vis[u]) {
+        int u = shared_load(bucket[i]);
+        if(!shared_load(vis[u])) {
             process_neighbors(u, output_bucket, level+1);
             // others skip a marked vertex, so its neighbors must be pushed first
             compiler_barrier();
-            vis[u] = 1;
+            shared_store(vis[u], 1);
         }
         // helpers skip entries up to here, so the entry must be done first
         compiler_barrier();
-        last_done = i;
+        shared_store(last_done, i);
     }
 }
 
@@ -492,20 +519,20 @@ void process_other_bucket(
     affinePermutation order = affine_shuffle(blocks, rng);
     size_t block = order.index;
 
-    const int* bucket = curr->buckets[work_on].list + start;
+    const int* bucket = shared_load(curr->buckets[work_on].list) + start;
     customList& output_bucket = next_node->buckets[tid];
 
     for(size_t b=0; b<blocks; b++) {
         int base = static_cast<int>(block)*helper_block;
         int end = min(base + helper_block, remaining);
         for(int i=base; i<end; i++) {
-            int u = bucket[i];
-            if(!at_level(u, level) || vis[u]) continue;
+            int u = shared_load(bucket[i]);
+            if(!at_level(u, level) || shared_load(vis[u])) continue;
 
             process_neighbors_shuffled(u, output_bucket, level+1, rng);
             // others skip a marked vertex, so its neighbors must be pushed first
             compiler_barrier();
-            vis[u] = 1;
+            shared_store(vis[u], 1);
         }
         block = next_affine_index(block, order.step, blocks);
     }
@@ -551,7 +578,7 @@ int blocks_per_owner;
 [[gnu::always_inline]] inline bool has_frontier_neighbor(
         const int* neighbors, size_t count, int depth) {
     for(size_t j=0; j<count; j++) {
-        if(dist[neighbors[j]] == depth) return true;
+        if(shared_load(dist[neighbors[j]]) == depth) return true;
     }
     return false;
 }
@@ -560,7 +587,7 @@ int blocks_per_owner;
 [[gnu::always_inline]] inline bool has_frontier_neighbor8(
         const int* neighbors, size_t count, uint8_t code) {
     for(size_t j=0; j<count; j++) {
-        if(dist8[neighbors[j]] == code) return true;
+        if(shared_load(dist8[neighbors[j]]) == code) return true;
     }
     return false;
 }
@@ -576,7 +603,7 @@ void scan_block(
     int n = 0;
     for(int u=range.begin; u<range.end; u++) {
         candidates[n] = u;
-        n += dist[u] == -1;
+        n += shared_load(dist[u]) == -1;
     }
     if(code > 0) {
         // what this level finds is the next level's frontier, under the next
@@ -590,7 +617,7 @@ void scan_block(
             size_t begin = offsets[u], end = offsets[u+1];
             if(has_frontier_neighbor8(adj.data() + begin, end - begin, frontier_code)) {
                 discover_vertex(u, output_bucket, depth + 1, next_code);
-                output_bucket.degree_sum += end - begin;
+                add_degrees(output_bucket, static_cast<long long>(end - begin));
             }
         }
         return;
@@ -600,7 +627,7 @@ void scan_block(
         size_t begin = offsets[u], end = offsets[u+1];
         if(has_frontier_neighbor(adj.data() + begin, end - begin, depth)) {
             discover_vertex(u, output_bucket, depth + 1, 0);
-            output_bucket.degree_sum += end - begin;
+            add_degrees(output_bucket, static_cast<long long>(end - begin));
         }
     }
 }
@@ -643,13 +670,13 @@ void fetch_own_blocks(
         outer_list_node* curr, int level, customList& output_bucket, int tid, int code) {
     int count = owned_blocks(tid);
     int& last_done = curr->progress[tid].last_done;
-    for(int k=0; k<count && curr->done[tid] < level; k++) {
-        if(helped_at_level(tid, k) != level) {
+    for(int k=0; k<count && shared_load(curr->done[tid]) < level; k++) {
+        if(shared_load(helped_at_level(tid, k)) != level) {
             scan_block(owned_block(tid, k), level, code, output_bucket);
         }
         // helpers skip blocks up to here, so their vertices must be marked first
         compiler_barrier();
-        last_done = k;
+        shared_store(last_done, k);
     }
     curr->mark_done(tid, level);
 }
@@ -670,7 +697,7 @@ void fetch_other_blocks(
 #else
         int owner = (tid + k) % num_t;
 #endif
-        if(curr->done[owner] >= level) continue;
+        if(shared_load(curr->done[owner]) >= level) continue;
         int start = last_done_on(curr, next_node, owner, level) + 1;
         int remaining = owned_blocks(owner) - start;
         affinePermutation order = affine_shuffle(max(remaining, 0), rng);
@@ -678,14 +705,14 @@ void fetch_other_blocks(
         for(int i=0; i<remaining; i++) {
             // read again for every block, since the owner and other helpers go on
             compiler_barrier();
-            if(curr->done[owner] >= level) break;
+            if(shared_load(curr->done[owner]) >= level) break;
             int block = start + static_cast<int>(index);
             if(block > last_done_on(curr, next_node, owner, level) &&
-                    helped_at_level(owner, block) != level) {
+                    shared_load(helped_at_level(owner, block)) != level) {
                 scan_block(owned_block(owner, block), level, code, output_bucket);
                 // others skip the block once this is set, so its vertices must be marked first
                 compiler_barrier();
-                helped_at_level(owner, block) = level;
+                shared_store(helped_at_level(owner, block), level);
             }
             index = next_affine_index(index, order.step, remaining);
         }
@@ -708,14 +735,14 @@ void top_down_level(
 #endif
         customList& bucket = curr->buckets[work_on];
         // done already, or the bucket holds another level
-        bool skip = curr->done[work_on] >= level || bucket.level != level;
+        bool skip = shared_load(curr->done[work_on]) >= level || shared_load(bucket.level) != level;
         // the level before the size (see begin_level)
         compiler_barrier();
-        if(skip || bucket.size == 0) {
+        if(skip || shared_load(bucket.size) == 0) {
             continue;
         }
 
-        int sz = bucket.size;
+        int sz = shared_load(bucket.size);
         // size must be read before the list pointer (see push_back)
         compiler_barrier();
 
@@ -750,29 +777,29 @@ void write_frontier_codes(
 #else
         int owner = (tid + k) % num_t;
 #endif
-        if(curr->codes_done[owner] >= level) continue;
+        if(shared_load(curr->codes_done[owner]) >= level) continue;
         const customList& bucket = curr->buckets[owner];
-        bool this_level = bucket.level == level;
+        bool this_level = shared_load(bucket.level) == level;
         // the level before the size (see begin_level)
         compiler_barrier();
         if(this_level) {
-            int sz = bucket.size;
+            int sz = shared_load(bucket.size);
             // size must be read before the list pointer (see push_back)
             compiler_barrier();
-            const int* list = bucket.list;
+            const int* list = shared_load(bucket.list);
             if(owner == tid) {
                 int& progress = curr->codes_progress[tid].last_done;
                 for(int i=0; i<sz; i++) {
-                    dist8[list[i]] = code;
+                    shared_store(dist8[shared_load(list[i])], code);
                     // helpers start past here, so the code must be written first
                     compiler_barrier();
-                    progress = i;
+                    shared_store(progress, i);
                 }
             }
             else {
                 for(int i=codes_done_on(curr, next_node, owner, level)+1; i<sz; i++) {
-                    int u = list[i];
-                    if(at_level(u, level)) dist8[u] = code;
+                    int u = shared_load(list[i]);
+                    if(at_level(u, level)) shared_store(dist8[u], code);
                 }
             }
         }
@@ -799,9 +826,9 @@ void bottom_up_level(
     long long frontier_degrees = 0;
     for(int t=0; t<num_t; t++) {
         const customList& bucket = curr->buckets[t];
-        if(bucket.level != level) continue;
+        if(shared_load(bucket.level) != level) continue;
         compiler_barrier();
-        frontier_degrees += bucket.degree_sum;
+        frontier_degrees += shared_load(bucket.degree_sum);
     }
     long long share = max(0LL, min(undiscovered, frontier_degrees) / num_t);
     output_bucket.reserve(static_cast<int>(share + share / 4));
@@ -844,10 +871,10 @@ bool plan_level(outer_list_node* curr, int level, level_plan& plan, bool& codes_
     long long scout = 0;
     for(int t=0; t<num_t; t++) {
         const customList& bucket = curr->buckets[t];
-        if(bucket.level != level) continue;
+        if(shared_load(bucket.level) != level) continue;
         compiler_barrier();
-        frontier_size += bucket.size;
-        scout += bucket.degree_sum;
+        frontier_size += shared_load(bucket.size);
+        scout += shared_load(bucket.degree_sum);
     }
     // the edge count restarts at 1 after bottom-up levels, as GAPBS's does
     if(plan.direction == bottom_up) scout = 1;
@@ -896,8 +923,8 @@ void wf_bfs(outer_list_node* nodes, int tid, mt19937& rng) {
         outer_list_node* next_node = &nodes[(level + 1) & 1];
         // helpers go by this thread's progress once its next bucket has the
         // next level (see last_done_on), so the old positions must go first
-        curr->progress[tid].last_done = -1;
-        curr->codes_progress[tid].last_done = -1;
+        shared_store(curr->progress[tid].last_done, -1);
+        shared_store(curr->codes_progress[tid].last_done, -1);
         compiler_barrier();
         next_node->buckets[tid].begin_level(level + 1);
 
@@ -931,15 +958,15 @@ void load_graph(const string& path) {
 // for the whole run, and each search resets them
 outer_list_node* nodes;
 
-// a search starts from vertex 0, the one entry of its first level. The threads
+// a search starts from the source, the one entry of its first level. The threads
 // are idle while it is set up, so its first array can come from thread 0's arena
 void start_search() {
     nodes[0].begin_search(0);
     nodes[1].begin_search(1);
     customList& first = nodes[0].buckets[0];
     first.begin_level(0);
-    first.push_back(0);
-    first.degree_sum = degree(0);
+    first.push_back(source);
+    first.degree_sum = degree(source);
 }
 
 // only once every thread has returned, since until then one may still be
@@ -957,7 +984,7 @@ void reset_share(int tid) {
     fill(dist.begin() + begin, dist.begin() + end, -1);
     fill(dist8.begin() + begin, dist8.begin() + end, 0);
     fill(vis.begin() + begin, vis.begin() + end, 0);
-    if(begin == 0 && end > 0) dist[0] = 0;
+    if(begin <= source && source < end) dist[source] = 0;
     fill(helped_at.begin() + tid * blocks_per_owner,
          helped_at.begin() + (tid + 1) * blocks_per_owner, -1);
 }
@@ -1083,6 +1110,7 @@ int main(int argc, char *argv[]) {
 
     try {
         load_graph(argv[1]);
+        source = graph_helpers::search_source(static_cast<size_t>(N));
     }
     catch(const exception& error) {
         cerr << "Error: " << error.what() << "\n";

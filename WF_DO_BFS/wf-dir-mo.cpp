@@ -26,7 +26,7 @@ vector<uint8_t> dist8;
 int num_t;
 
 // keeps the compiler from moving memory accesses across this point; x86 itself
-// keeps stores in order and loads in order (SDM Vol. 3A, 8.2.2)
+// keeps stores in order and loads in order (SDM Vol. 3A, 9.2.2, December 2022)
 [[gnu::always_inline]] inline void compiler_barrier() {
     asm volatile("" ::: "memory");
 }

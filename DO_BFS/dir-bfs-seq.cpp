@@ -589,8 +589,10 @@ size_t M;
 
     // the graph can be moved from but not assigned
     unique_ptr<Graph> g;
+    NodeID source = 0;
     try {
         g.reset(new Graph(load_graph(argv[1])));
+        source = graph_helpers::search_source(static_cast<size_t>(g->num_nodes()));
     }
     catch(const exception& error) {
         cerr << "Error: " << error.what() << "\n";
@@ -616,7 +618,7 @@ size_t M;
 
     for(int i=0; i<repetitions; i++) {
         high_resolution_clock::time_point t1 = high_resolution_clock::now();
-        pvector<NodeID> result = DOBFS(*g, 0);
+        pvector<NodeID> result = DOBFS(*g, source);
         high_resolution_clock::time_point t2 = high_resolution_clock::now();
 
         total_duration += duration_cast<microseconds>(t2 - t1).count();

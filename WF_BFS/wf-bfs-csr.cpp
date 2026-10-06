@@ -6,6 +6,8 @@ using namespace chrono;
 
 int N;
 size_t M;
+// the vertex every search starts from (see graph_helpers::search_source)
+int source = 0;
 // vertex u's neighbors are adj[offsets[u]] up to, not including, adj[offsets[u+1]]
 graph_helpers::array<size_t> offsets;
 graph_helpers::array<int> adj;
@@ -15,9 +17,22 @@ vector<int> dist, vis;
 int num_t;
 
 // keeps the compiler from moving memory accesses across this point; x86 itself
-// keeps stores in order and loads in order (SDM Vol. 3A, 8.2.2)
+// keeps stores in order and loads in order (SDM Vol. 3A, 9.2.2, December 2022)
 [[gnu::always_inline]] inline void compiler_barrier() {
     asm volatile("" ::: "memory");
+}
+
+// every access to a location that another thread may use at the same time,
+// with one of them writing, is a relaxed atomic one; the barriers keep their
+// order
+template <class T>
+[[gnu::always_inline]] inline T shared_load(const T& object) {
+    return atomic_ref<T>(const_cast<T&>(object)).load(memory_order_relaxed);
+}
+
+template <class T>
+[[gnu::always_inline]] inline void shared_store(T& object, T value) {
+    atomic_ref<T>(object).store(value, memory_order_relaxed);
 }
 
 // the memory one thread hands out during a search: its buckets' arrays and the
@@ -105,10 +120,11 @@ class customList {
     // readers load size before list, so publish the array contents, then list,
     // then size; otherwise a reader can index past what it is able to see
     [[gnu::always_inline]] inline void push_back(int x) {
-        if(size == capacity) grow();
-        list[size] = x;
+        int s = shared_load(size);
+        if(s == capacity) grow();
+        shared_store(shared_load(list)[s], x);
         compiler_barrier();
-        size++;
+        shared_store(size, s + 1);
     }
 
     // an array smaller than an arena block would leave the rest of it unused
@@ -124,7 +140,7 @@ class customList {
             memory->allocate(sizeof(int) * static_cast<size_t>(wanted)));
         if(size > 0) std::copy(list, list+size, new_list);
         compiler_barrier();
-        list = new_list;
+        shared_store(list, new_list);
         capacity = wanted;
     }
 };
@@ -271,12 +287,12 @@ constexpr int helper_block = 16;
 
 // push before marking: if this thread stops in between, v stays unmarked and
 // another thread can still discover and push it. Every thread that marks v
-// writes the same distance, so a plain store does
+// writes the same distance, so a store does, with no compare-and-swap
 [[gnu::always_inline]] inline void discover_vertex(
         int v, customList& output_bucket, int next_distance) {
     output_bucket.push_back(v);
     compiler_barrier();
-    dist[v] = next_distance;
+    shared_store(dist[v], next_distance);
 }
 
 void process_neighbors(
@@ -285,7 +301,7 @@ void process_neighbors(
     size_t count = offsets[u+1] - offsets[u];
     for(size_t j=0; j<count; j++) {
         int v = neighbors[j];
-        if(dist[v] == -1) {
+        if(shared_load(dist[v]) == -1) {
             discover_vertex(v, output_bucket, next_distance);
         }
     }
@@ -315,7 +331,7 @@ void process_neighbors_shuffled(
         size_t end = min((block + 1)*helper_block, count);
         for(size_t j=block*helper_block; j<end; j++) {
             int v = neighbors[j];
-            if(dist[v] == -1) {
+            if(shared_load(dist[v]) == -1) {
                 discover_vertex(v, output_bucket, next_distance);
             }
         }
@@ -327,22 +343,22 @@ void process_own_bucket(
         outer_list_node* curr, outer_list_node* next_node,
         int tid, int sz
     ) {
-    const int* bucket = curr->owners[tid].bucket.list;
+    const int* bucket = shared_load(curr->owners[tid].bucket.list);
     customList& output_bucket = next_node->owners[tid].bucket;
     int& last_done = curr->owners[tid].last_done;
 
     for(int i=0; i<sz; i++) {
-        int u = bucket[i];
-        if(!vis[u]) {
-            int du = dist[u];
+        int u = shared_load(bucket[i]);
+        if(!shared_load(vis[u])) {
+            int du = shared_load(dist[u]);
             process_neighbors(u, output_bucket, du+1);
             // others skip a marked vertex, so its neighbors must be pushed first
             compiler_barrier();
-            vis[u] = 1;
+            shared_store(vis[u], 1);
         }
         // helpers skip entries up to here, so the entry must be done first
         compiler_barrier();
-        last_done = i;
+        shared_store(last_done, i);
     }
 }
 
@@ -350,7 +366,7 @@ void process_other_bucket(
         outer_list_node* curr, outer_list_node* next_node,
         int work_on, int tid, int sz, mt19937& rng
     ) {
-    int start = curr->owners[work_on].last_done + 1;
+    int start = shared_load(curr->owners[work_on].last_done) + 1;
     if(start >= sz) return;
     int remaining = sz - start;
 
@@ -358,21 +374,21 @@ void process_other_bucket(
     affinePermutation order = affine_shuffle(blocks, rng);
     size_t block = order.index;
 
-    const int* bucket = curr->owners[work_on].bucket.list + start;
+    const int* bucket = shared_load(curr->owners[work_on].bucket.list) + start;
     customList& output_bucket = next_node->owners[tid].bucket;
 
     for(size_t b=0; b<blocks; b++) {
         int base = static_cast<int>(block)*helper_block;
         int end = min(base + helper_block, remaining);
         for(int i=base; i<end; i++) {
-            int u = bucket[i];
-            if(vis[u]) continue;
+            int u = shared_load(bucket[i]);
+            if(shared_load(vis[u])) continue;
 
-            int du = dist[u];
+            int du = shared_load(dist[u]);
             process_neighbors_shuffled(u, output_bucket, du+1, rng);
             // others skip a marked vertex, so its neighbors must be pushed first
             compiler_barrier();
-            vis[u] = 1;
+            shared_store(vis[u], 1);
         }
         block = next_affine_index(block, order.step, blocks);
     }
@@ -405,7 +421,7 @@ void top_down_level(
     bool next_is_null = true;
 
     for(int _=0; _<num_t; _++) {
-        if(curr->owners[work_on].done || curr->owners[work_on].bucket.size == 0) {
+        if(shared_load(curr->owners[work_on].done) || shared_load(curr->owners[work_on].bucket.size) == 0) {
             work_on++;
             if(work_on>=num_t) work_on -= num_t;
             continue;
@@ -418,7 +434,7 @@ void top_down_level(
 
         outer_list_node* next_node = curr->next.load();
 
-        int sz = curr->owners[work_on].bucket.size;
+        int sz = shared_load(curr->owners[work_on].bucket.size);
         // size must be read before the list pointer (see push_back)
         compiler_barrier();
 
@@ -432,7 +448,8 @@ void top_down_level(
 
         // the flag shares its line with the bucket, which every thread reads at every
         // level; rewriting a set flag would take the line from all of them for nothing
-        if(!curr->owners[work_on].done) curr->owners[work_on].done = true;
+        uint8_t& done = curr->owners[work_on].done;
+        if(!shared_load(done)) shared_store(done, uint8_t(1));
         work_on++;
         if(work_on>=num_t) work_on -= num_t;
     }
@@ -463,11 +480,11 @@ void load_graph(const string& path) {
     graph_helpers::build_csr(edges, offsets, adj);
 }
 
-// a search starts from vertex 0, the one entry of its first level. The threads
+// a search starts from the source, the one entry of its first level. The threads
 // are idle while it is set up, so it can come from thread 0's arena
 outer_list_node* make_first_level() {
     outer_list_node* head = new_level(0, arenas[0]);
-    head->owners[0].bucket.push_back(0);
+    head->owners[0].bucket.push_back(source);
     return head;
 }
 
@@ -486,7 +503,7 @@ void reset_share(int tid) {
     int end = static_cast<int>(1LL * N * (tid + 1) / num_t);
     fill(dist.begin() + begin, dist.begin() + end, -1);
     fill(vis.begin() + begin, vis.begin() + end, 0);
-    if(begin == 0 && end > 0) dist[0] = 0;
+    if(begin <= source && source < end) dist[source] = 0;
 }
 
 // the threads live for the whole run, as GAPBS's OpenMP threads do, so no
@@ -591,6 +608,7 @@ int main(int argc, char *argv[]) {
 
     try {
         load_graph(argv[1]);
+        source = graph_helpers::search_source(static_cast<size_t>(N));
     }
     catch(const exception& error) {
         cerr << "Error: " << error.what() << "\n";
